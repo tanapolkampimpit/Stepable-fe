@@ -106,7 +106,7 @@ export default function AiCameraScreen() {
         </View>
         <Pressable onPress={() => { if (photoUri && !analyzing) void runAnalysis(photoUri); }} style={[styles.notice, analysis && styles.noticeSuccess, analysisError && styles.noticeError]} accessibilityRole="button" accessibilityLabel="วิเคราะห์ภาพด้วย AI">
           <View style={styles.noticeIcon}><Icon name={analysis ? 'check' : analysisError ? 'warning' : 'info'} size={17} color="#FFFFFF" /></View>
-          <Text style={styles.noticeText}>{analyzing ? 'กำลังวิเคราะห์ทางเท้าจาก AI…' : analysis ? `พบสิ่งกีดขวาง ${analysis.obstacles.length} จุด · พื้นที่ทางเดิน ${Math.round(analysis.sidewalkCoverage * 100)}%` : analysisError ? `${analysisError} · แตะเพื่อลองใหม่` : 'ถ่ายภาพแล้วแตะเพื่อวิเคราะห์สิ่งกีดขวางด้วย AI'}</Text>
+          <Text style={styles.noticeText}>{analyzing ? 'กำลังวิเคราะห์ทางเท้าจาก AI…' : analysis ? formatAnalysis(analysis) : analysisError ? `${analysisError} · แตะเพื่อลองใหม่` : 'ถ่ายภาพแล้วแตะเพื่อวิเคราะห์สิ่งกีดขวางด้วย AI'}</Text>
         </Pressable>
         <View style={styles.actions}>
           <Pressable onPress={() => { if (photoUri) { setPhotoUri(null); setAnalysis(null); setAnalysisError(''); } else router.back(); }} style={styles.primary} accessibilityRole="button"><Icon name="back" size={20} color="#FFFFFF" /><Text style={styles.primaryText}>{photoUri ? 'ถ่ายใหม่' : 'กลับ'}</Text></Pressable>
@@ -124,6 +124,22 @@ export default function AiCameraScreen() {
       </View>
     </View>
   );
+}
+
+const aiClassLabels: Record<string, string> = {
+  person: 'คน',
+  vehicle: 'รถยนต์',
+  two_wheeler: 'มอเตอร์ไซค์/จักรยาน',
+  road_sidewalk: 'ถนน/ทางเท้า',
+  building: 'อาคาร',
+  vegetation: 'ต้นไม้/พืช',
+  street_fixture: 'สิ่งกีดขวางริมทาง',
+};
+
+function formatAnalysis(result: AiAnalysis) {
+  const labels = [...new Set(result.obstacles.map((item) => aiClassLabels[item.className] || item.className))];
+  const detected = labels.length ? ` (${labels.join(', ')})` : '';
+  return `พบสิ่งกีดขวาง ${result.obstacles.length} จุด${detected} · พื้นที่ทางเดิน ${Math.round(result.sidewalkCoverage * 100)}%`;
 }
 
 function Metric({ icon, label, value, active }: { icon: 'camera' | 'flashlight' | 'check'; label: string; value: string; active: boolean }) {
