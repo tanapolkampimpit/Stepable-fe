@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+
+# Expo and Metro
+.expo/
+.expo-shared/
+dist/
+web-build/
+expo-env.d.ts
+.metro-health-check*
+
+# Generated native projects and build artifacts
+/android/
+/ios/
+.gradle/
+.cxx/
+.kotlin/
+local.properties
+*.orig.*
+*.xcuserstate
+xcuserdata/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Signing credentials
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+*.provisionprofile
+
+# Logs, coverage, and caches
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage/
+.eslintcache
+.turbo/
+*.tsbuildinfo
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
