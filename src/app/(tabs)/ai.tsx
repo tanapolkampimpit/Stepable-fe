@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Icon } from '../../components/Icon';
 import { AppText as Text } from '../../components/AppText';
 import { useAppData } from '../../components/AppDataContext';
+import { analyzeImage, type AiAnalysis } from '../../services/ai';
 import { colors } from '../../theme';
 
 export default function AiCameraScreen() {
@@ -18,13 +19,32 @@ export default function AiCameraScreen() {
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [cameraError, setCameraError] = useState('');
+  const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
+  const [analysisError, setAnalysisError] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
+
+  const runAnalysis = async (uri: string) => {
+    setAnalyzing(true);
+    setAnalysisError('');
+    try {
+      setAnalysis(await analyzeImage(uri));
+    } catch (error) {
+      setAnalysis(null);
+      setAnalysisError(error instanceof Error ? error.message : 'เชื่อมต่อ AI server ไม่สำเร็จ');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
 
   const capturePhoto = async () => {
     if (!cameraRef.current || busy) return;
     setBusy(true);
     try {
       const image = await cameraRef.current.takePictureAsync({ quality: 0.82, shutterSound: true });
-      if (image?.uri) setPhotoUri(image.uri);
+      if (image?.uri) {
+        setPhotoUri(image.uri);
+        void runAnalysis(image.uri);
+      }
     } catch {
       setCameraError('ถ่ายภาพไม่สำเร็จ ตรวจสอบสิทธิ์กล้องและลองใหม่');
     } finally {
@@ -34,7 +54,10 @@ export default function AiCameraScreen() {
 
   const choosePhoto = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.82 });
-    if (!result.canceled && result.assets[0]?.uri) setPhotoUri(result.assets[0].uri);
+    if (!result.canceled && result.assets[0]?.uri) {
+      setPhotoUri(result.assets[0].uri);
+      void runAnalysis(result.assets[0].uri);
+    }
   };
 
   const reportPhoto = () => {
@@ -81,16 +104,19 @@ export default function AiCameraScreen() {
           <Metric icon="flashlight" label="ไฟฉาย" value={torch ? 'เปิด' : 'ปิด'} active={torch} />
           <Metric icon="check" label="ภาพที่ถ่าย" value={photoUri ? '1 ภาพ' : '0 ภาพ'} active={Boolean(photoUri)} />
         </View>
-        <View style={styles.notice}><View style={styles.noticeIcon}><Icon name="info" size={17} color="#FFFFFF" /></View><Text style={styles.noticeText}>กล้องถ่ายภาพได้ แต่โมเดล AI ตรวจจับสิ่งกีดขวางยังไม่ได้เชื่อมต่อ</Text></View>
+        <Pressable onPress={() => { if (photoUri && !analyzing) void runAnalysis(photoUri); }} style={[styles.notice, analysis && styles.noticeSuccess, analysisError && styles.noticeError]} accessibilityRole="button" accessibilityLabel="วิเคราะห์ภาพด้วย AI">
+          <View style={styles.noticeIcon}><Icon name={analysis ? 'check' : analysisError ? 'warning' : 'info'} size={17} color="#FFFFFF" /></View>
+          <Text style={styles.noticeText}>{analyzing ? 'กำลังวิเคราะห์ทางเท้าจาก AI…' : analysis ? `พบสิ่งกีดขวาง ${analysis.obstacles.length} จุด · พื้นที่ทางเดิน ${Math.round(analysis.sidewalkCoverage * 100)}%` : analysisError ? `${analysisError} · แตะเพื่อลองใหม่` : 'ถ่ายภาพแล้วแตะเพื่อวิเคราะห์สิ่งกีดขวางด้วย AI'}</Text>
+        </Pressable>
         <View style={styles.actions}>
-          <Pressable onPress={() => photoUri ? setPhotoUri(null) : router.back()} style={styles.primary} accessibilityRole="button"><Icon name="back" size={20} color="#FFFFFF" /><Text style={styles.primaryText}>{photoUri ? 'ถ่ายใหม่' : 'กลับ'}</Text></Pressable>
+          <Pressable onPress={() => { if (photoUri) { setPhotoUri(null); setAnalysis(null); setAnalysisError(''); } else router.back(); }} style={styles.primary} accessibilityRole="button"><Icon name="back" size={20} color="#FFFFFF" /><Text style={styles.primaryText}>{photoUri ? 'ถ่ายใหม่' : 'กลับ'}</Text></Pressable>
           <Pressable onPress={reportPhoto} style={styles.secondary} accessibilityRole="button"><Icon name="flag" size={20} color={colors.forest} /><Text style={styles.secondaryText}>{photoUri ? 'แนบรายงาน' : 'รายงานปัญหา'}</Text></Pressable>
         </View>
         <View style={styles.captureRow}>
           <Pressable onPress={() => { void choosePhoto(); }} style={styles.thumbnail} accessibilityRole="button" accessibilityLabel="เลือกภาพจากคลัง">
             {photoUri ? <Image source={{ uri: photoUri }} style={styles.thumbnailImage} /> : <Icon name="camera" size={18} color="#64748B" />}
           </Pressable>
-          <Pressable onPress={() => { if (photoUri) setPhotoUri(null); else void capturePhoto(); }} disabled={busy || !permission?.granted} style={[styles.capture, (!permission?.granted || busy) && styles.captureDisabled]} accessibilityRole="button" accessibilityLabel={photoUri ? 'ล้างภาพที่ถ่าย' : 'ถ่ายภาพ'}>
+          <Pressable onPress={() => { if (photoUri) { setPhotoUri(null); setAnalysis(null); setAnalysisError(''); } else void capturePhoto(); }} disabled={busy || !permission?.granted} style={[styles.capture, (!permission?.granted || busy) && styles.captureDisabled]} accessibilityRole="button" accessibilityLabel={photoUri ? 'ล้างภาพที่ถ่าย' : 'ถ่ายภาพ'}>
             {busy ? <ActivityIndicator color={colors.forest} /> : <View style={styles.captureInner} />}
           </Pressable>
           <View style={styles.captureSpacer} />
@@ -126,7 +152,7 @@ const styles = StyleSheet.create({
   cameraNotice: { position: 'absolute', top: '45%', left: 16, right: 16, padding: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.94)' }, cameraNoticeText: { color: '#B91C1C', fontSize: 10, textAlign: 'center' },
   sheet: { position: 'absolute', left: 10, right: 10, bottom: 10, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.97)', padding: 14, gap: 11, shadowColor: '#0F172A', shadowOpacity: 0.18, shadowRadius: 18, elevation: 14 },
   metrics: { flexDirection: 'row' }, metric: { flex: 1, minWidth: 0, alignItems: 'center', gap: 3, borderRightWidth: 1, borderRightColor: '#E2E8F0' }, metricLabel: { color: '#334E7D', fontSize: 9, textAlign: 'center' }, metricValue: { color: '#102A72', fontSize: 17, fontWeight: '800' }, green: { color: '#16A166' },
-  notice: { minHeight: 46, borderRadius: 15, backgroundColor: '#EAF2FF', flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 10 }, noticeIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.forest, alignItems: 'center', justifyContent: 'center' }, noticeText: { flex: 1, color: '#1E3A8A', fontSize: 10, lineHeight: 15 },
+  notice: { minHeight: 46, borderRadius: 15, backgroundColor: '#EAF2FF', flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 10 }, noticeSuccess: { backgroundColor: '#E8F8F0' }, noticeError: { backgroundColor: '#FFF7E6' }, noticeIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.forest, alignItems: 'center', justifyContent: 'center' }, noticeText: { flex: 1, color: '#1E3A8A', fontSize: 10, lineHeight: 15 },
   actions: { flexDirection: 'row', gap: 9 }, primary: { flex: 1, minHeight: 44, borderRadius: 15, backgroundColor: colors.forest, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, primaryText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' }, secondary: { flex: 1, minHeight: 44, borderRadius: 15, backgroundColor: '#EAF2FF', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, secondaryText: { color: colors.forest, fontSize: 10, fontWeight: '800' },
   captureRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, thumbnail: { width: 42, height: 42, borderRadius: 10, backgroundColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }, thumbnailImage: { width: '100%', height: '100%' }, capture: { width: 58, height: 58, borderRadius: 29, borderWidth: 4, borderColor: colors.forest, alignItems: 'center', justifyContent: 'center' }, captureDisabled: { borderColor: '#94A3B8' }, captureInner: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.forest }, captureSpacer: { width: 42 },
 });
