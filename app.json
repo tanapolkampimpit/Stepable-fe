@@ -2,6 +2,7 @@
   "expo": {
     "name": "st-fe",
     "slug": "st-fe",
+    "scheme": "st-fe",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -19,7 +20,31 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
-    }
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "StepAble ใช้ตำแหน่งขณะเปิดแอปเพื่อแสดงแผนที่ สภาพอากาศ และเส้นทางเดินจริง"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "StepAble ใช้กล้องเพื่อถ่ายภาพทางเท้าและแนบในรายงานปัญหา",
+          "enableMicrophonePermission": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "StepAble เข้าถึงรูปภาพเมื่อคุณเลือกแนบรูปในรายงานปัญหา"
+        }
+      ],
+      "expo-font"
+    ]
   }
 }
