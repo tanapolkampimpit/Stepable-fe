@@ -21,6 +21,7 @@ function apiUrl() {
 }
 
 export async function analyzeImage(uri: string): Promise<AiAnalysis> {
+  const endpoint = apiUrl();
   const body = new FormData();
   if (Platform.OS === 'web') {
     const response = await fetch(uri);
@@ -29,7 +30,15 @@ export async function analyzeImage(uri: string): Promise<AiAnalysis> {
   } else {
     body.append('file', { uri, name: 'stepable-camera.jpg', type: 'image/jpeg' } as unknown as Blob);
   }
-  const response = await fetch(`${apiUrl()}/v1/analyze`, { method: 'POST', body });
+  let response: Response;
+  try {
+    response = await fetch(`${endpoint}/v1/analyze`, { method: 'POST', body });
+  } catch {
+    if (/localhost|127\.0\.0\.1/.test(endpoint)) {
+      throw new Error(`มือถือเชื่อมต่อ ${endpoint} ไม่ได้: ใช้ IP ของคอมพิวเตอร์ในวง LAN แทน localhost`);
+    }
+    throw new Error(`เชื่อมต่อ AI server ไม่ได้ที่ ${endpoint}: ตรวจว่า server เปิดอยู่และมือถืออยู่ Wi-Fi เดียวกัน`);
+  }
   const payload = await response.json().catch(() => null) as { detail?: string } | null;
   if (!response.ok) throw new Error(payload?.detail || `AI server ตอบกลับ ${response.status}`);
   return payload as unknown as AiAnalysis;
