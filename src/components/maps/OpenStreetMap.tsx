@@ -1,8 +1,8 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import { AppText as Text } from './AppText';
+import { AppText as Text } from '../ui/AppText';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import type { Coordinates } from '../services/geo';
+import type { Coordinates } from '../../services/geo';
 
 export type OSMMapMarker = { id: string; label: string; coordinates: Coordinates; color?: string };
 export type OpenStreetMapHandle = { zoomIn: () => void; zoomOut: () => void; centerOn: (coordinates: Coordinates) => void };

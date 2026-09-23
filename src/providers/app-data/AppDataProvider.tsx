@@ -1,71 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as Location from 'expo-location';
-import { distanceMeters, reverseGeocodeOsm, type Coordinates, type WalkingRoute } from '../services/geo';
-
-const STORAGE_KEYS = {
-  preferences: '@stepable/preferences',
-  savedPlaces: '@stepable/saved-places',
-  reports: '@stepable/reports',
-};
-
-export type UserPreferences = {
-  safeFirst: boolean;
-  avoidSteps: boolean;
-  wheelchair: boolean;
-  avoidDark: boolean;
-  voiceNavigation: boolean;
-  vibration: boolean;
-  fontScale: 0.9 | 1 | 1.15 | 1.3;
-};
-
-export type SavedPlace = { id: string; label: string; coordinates: Coordinates };
-export type LocalReport = {
-  id: string;
-  type: string;
-  severity: 'ต่ำ' | 'ปานกลาง' | 'สูง';
-  description: string;
-  coordinates: Coordinates;
-  createdAt: string;
-  imageUri?: string;
-};
-export type CurrentLocation = Coordinates & { accuracy: number | null };
-export type CurrentWeather = { temperature: number; code: number; humidity?: number; timezone: string };
-export type NavigationPlan = { destination: SavedPlace; origin: Coordinates; route: WalkingRoute; routePreference: string };
-
-const defaultPreferences: UserPreferences = {
-  safeFirst: true,
-  avoidSteps: true,
-  wheelchair: false,
-  avoidDark: true,
-  voiceNavigation: true,
-  vibration: true,
-  fontScale: 1,
-};
-
-type AppDataValue = {
-  location: CurrentLocation | null;
-  placeLabel: string;
-  locationStatus: 'loading' | 'granted' | 'denied' | 'error' | 'unknown';
-  locationMessage: string;
-  isLocating: boolean;
-  refreshLocation: () => Promise<Coordinates | null>;
-  weather: CurrentWeather | null;
-  weatherMessage: string;
-  refreshWeather: () => void;
-  timeNow: number;
-  preferences: UserPreferences;
-  updatePreferences: (update: Partial<UserPreferences>) => void;
-  savedPlaces: SavedPlace[];
-  savePlace: (place: SavedPlace) => Promise<void>;
-  removeSavedPlace: (id: string) => Promise<void>;
-  reports: LocalReport[];
-  addReport: (report: Omit<LocalReport, 'id' | 'createdAt'>) => Promise<void>;
-  navigationPlan: NavigationPlan | null;
-  setNavigationPlan: (plan: NavigationPlan | null) => void;
-};
-
-const AppDataContext = createContext<AppDataValue | null>(null);
+import { distanceMeters, reverseGeocodeOsm, type Coordinates } from '../../services/geo';
+import { AppDataContext } from './AppDataContext';
+import { DEFAULT_PREFERENCES, STORAGE_KEYS } from './constants';
+import type {
+  AppDataValue,
+  CurrentLocation,
+  CurrentWeather,
+  LocalReport,
+  NavigationPlan,
+  SavedPlace,
+  UserPreferences,
+} from './types';
 
 export function AppDataProvider({ children }: { children: ReactNode }) {
   const [location, setLocation] = useState<CurrentLocation | null>(null);
@@ -76,7 +23,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [weather, setWeather] = useState<CurrentWeather | null>(null);
   const [weatherMessage, setWeatherMessage] = useState('กำลังโหลดอากาศตามตำแหน่งจริง');
   const [timeNow, setTimeNow] = useState(0);
-  const [preferences, setPreferences] = useState(defaultPreferences);
+  const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([]);
   const [reports, setReports] = useState<LocalReport[]>([]);
   const reportsRef = useRef<LocalReport[]>([]);
@@ -97,7 +44,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       longitude: next.coords.longitude,
       accuracy: next.coords.accuracy,
     };
-    setLocation((previous) => previous && distanceMeters(previous, updated) < 15 ? previous : updated);
+    // Keep enough GPS resolution for turn-by-turn distance cues. The watcher
+    // still controls the normal/navigation update cadence below.
+    setLocation((previous) => previous && distanceMeters(previous, updated) < 5 ? previous : updated);
     setLocationStatus('granted');
     setLocationMessage('ตำแหน่งอัปเดตจาก GPS ของอุปกรณ์');
   }, []);
@@ -153,9 +102,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     void Location.watchPositionAsync(
       {
-        accuracy: Location.LocationAccuracy.Balanced,
-        distanceInterval: 20,
-        timeInterval: 8_000,
+        accuracy: navigationPlan ? Location.LocationAccuracy.High : Location.LocationAccuracy.Balanced,
+        distanceInterval: navigationPlan ? 5 : 20,
+        timeInterval: navigationPlan ? 3_000 : 8_000,
       },
       applyLocation,
       () => setLocationMessage('ตำแหน่งสดหยุดชั่วคราว ระบบจะแสดงตำแหน่งล่าสุดที่อ่านได้'),
@@ -169,7 +118,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       locationSubscription.current?.remove();
       locationSubscription.current = null;
     };
-  }, [applyLocation, locationStatus]);
+  }, [applyLocation, locationStatus, navigationPlan]);
 
   useEffect(() => {
     const initialTime = setTimeout(() => setTimeNow(Date.now()), 0);
@@ -242,7 +191,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       AsyncStorage.getItem(STORAGE_KEYS.reports),
     ]).then(([storedPreferences, storedSaved, storedReports]) => {
       if (cancelled) return;
-      if (storedPreferences) setPreferences({ ...defaultPreferences, ...JSON.parse(storedPreferences) as Partial<UserPreferences> });
+      if (storedPreferences) setPreferences({ ...DEFAULT_PREFERENCES, ...JSON.parse(storedPreferences) as Partial<UserPreferences> });
       if (storedSaved) setSavedPlaces(JSON.parse(storedSaved) as SavedPlace[]);
       if (storedReports) {
         const parsedReports = JSON.parse(storedReports) as LocalReport[];
@@ -308,10 +257,4 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   ]);
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
-}
-
-export function useAppData() {
-  const value = useContext(AppDataContext);
-  if (!value) throw new Error('useAppData must be used inside AppDataProvider');
-  return value;
 }

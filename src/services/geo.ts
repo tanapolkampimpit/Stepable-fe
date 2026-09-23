@@ -32,6 +32,14 @@ export type WalkingRoute = {
   maneuvers: WalkingManeuver[];
 };
 
+export type RouteProgress = {
+  nearestIndex: number;
+  maneuverIndex: number;
+  remainingKm: number;
+  remainingFraction: number;
+  offRoute: boolean;
+};
+
 type PhotonFeature = {
   geometry?: { coordinates?: [number, number] };
   properties?: {
@@ -208,4 +216,49 @@ export function distanceMeters(from: Coordinates, to: Coordinates): number {
   const deltaLon = radians(to.longitude - from.longitude);
   const a = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
   return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/** Distance along the decoded route, rather than straight-line distance. */
+export function distanceBetweenRouteIndices(points: Coordinates[], start: number, end: number): number {
+  if (!points.length) return 0;
+  let total = 0;
+  const from = Math.max(0, Math.min(start, points.length - 1));
+  const to = Math.max(from, Math.min(end, points.length - 1));
+  for (let index = from; index < to; index += 1) total += distanceMeters(points[index], points[index + 1]);
+  return total;
+}
+
+/** Match the phone GPS position to the next turn in a Valhalla walking route. */
+export function getRouteProgress(route: WalkingRoute, current: Coordinates): RouteProgress {
+  let nearestIndex = 0;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  route.coordinates.forEach((point, index) => {
+    const distance = distanceMeters(current, point);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  });
+
+  const remainingMeters = distanceBetweenRouteIndices(route.coordinates, nearestIndex, route.coordinates.length - 1);
+  const totalMeters = Math.max(route.distanceKm * 1_000, 1);
+  const foundManeuverIndex = route.maneuvers.findIndex((maneuver) => maneuver.end_shape_index >= nearestIndex);
+  const maneuverIndex = Math.max(0, foundManeuverIndex < 0 ? route.maneuvers.length - 1 : foundManeuverIndex);
+  return {
+    nearestIndex,
+    maneuverIndex,
+    remainingKm: remainingMeters / 1_000,
+    remainingFraction: Math.min(1, remainingMeters / totalMeters),
+    offRoute: nearestDistance > 120,
+  };
+}
+
+export function getManeuverInstruction(maneuver: WalkingManeuver): string {
+  const instruction = `${maneuver.verbal_succinct_transition_instruction ?? ''} ${maneuver.instruction}`.toLowerCase();
+  if (instruction.includes('destination') || maneuver.type === 5) return 'ถึงจุดหมาย';
+  if (instruction.includes('u-turn')) return 'กลับตัว';
+  if (instruction.includes('left')) return 'เลี้ยวซ้าย';
+  if (instruction.includes('right')) return 'เลี้ยวขวา';
+  if (instruction.includes('straight') || instruction.includes('continue') || instruction.includes('walk')) return 'เดินตรงไป';
+  return 'เดินตามเส้นทาง';
 }
