@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as Location from 'expo-location';
 import { distanceMeters, reverseGeocodeOsm, type Coordinates } from '../../services/geo';
+import { fetchCurrentWeather, fetchReports, categoryToThai, severityToThai } from '../../services/api';
 import { AppDataContext } from './AppDataContext';
 import { DEFAULT_PREFERENCES, STORAGE_KEYS } from './constants';
 import type {
@@ -172,19 +173,94 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         throw new Error('Invalid weather response');
       }
       if (!cancelled) {
+    setWeatherMessage('กำลังอัปเดตสภาพอากาศจาก StepAble API');
+
+    // Try StepAble Backend API first
+    void fetchCurrentWeather(coordinates.latitude, coordinates.longitude)
+      .then((data) => {
+        if (cancelled) return;
         setWeather({
-          temperature: data.current.temperature_2m,
-          code: data.current.weather_code ?? 0,
-          humidity: data.current.relative_humidity_2m,
-          timezone: data.timezone,
+          temperature: data.temperatureC,
+          code: data.weatherCode,
+          humidity: data.relativeHumidity,
+          timezone: 'Asia/Bangkok',
+          condition: data.weatherCondition,
+          advisory: data.advisory ?? undefined,
+          isSafeForWalking: data.isSafeForWalking,
         });
         setWeatherMessage(message('location.latestOpenMeteoWeatherForYourLocation'));
       }
     }).catch(() => {
       if (!cancelled) setWeatherMessage(message('location.couldNotLoadWeatherCheckYourConnection'));
     });
+        setWeatherMessage(data.advisory || `สภาพอากาศ: ${data.weatherCondition}`);
+      })
+      .catch(() => {
+        // Fallback to Open-Meteo if backend weather is unavailable
+        const url = new URL('https://api.open-meteo.com/v1/forecast');
+        url.search = new URLSearchParams({
+          latitude: String(coordinates.latitude),
+          longitude: String(coordinates.longitude),
+          current: 'temperature_2m,weather_code,relative_humidity_2m',
+          timezone: 'auto',
+        }).toString();
+        void fetch(url.toString())
+          .then(async (response) => {
+            if (!response.ok) throw new Error('Weather service unavailable');
+            const data = (await response.json()) as {
+              timezone?: string;
+              current?: { temperature_2m?: number; weather_code?: number; relative_humidity_2m?: number };
+            };
+            if (!data.current || typeof data.current.temperature_2m !== 'number' || !data.timezone) {
+              throw new Error('Invalid weather response');
+            }
+            if (!cancelled) {
+              setWeather({
+                temperature: data.current.temperature_2m,
+                code: data.current.weather_code ?? 0,
+                humidity: data.current.relative_humidity_2m,
+                timezone: data.timezone,
+              });
+              setWeatherMessage('สภาพอากาศตามพิกัดปัจจุบัน');
+            }
+          })
+          .catch(() => {
+            if (!cancelled) setWeatherMessage('โหลดอากาศไม่ได้ แตะเพื่อลองใหม่');
+          });
+      });
+
     return () => { cancelled = true; };
   }, [location, timeNow, setWeatherMessage]);
+
+  const refreshReports = useCallback(async () => {
+    try {
+      const serverReports = await fetchReports({ limit: 100 });
+      const mappedServerReports: LocalReport[] = serverReports.map((item) => ({
+        id: item.id,
+        type: categoryToThai(item.category),
+        severity: severityToThai(item.severity),
+        description: item.description || item.title || '',
+        coordinates: { latitude: item.latitude, longitude: item.longitude },
+        createdAt: item.createdAt,
+        imageUri: item.photoUrl || undefined,
+        status: item.status,
+      }));
+
+      // Combine with local unsynced reports by ID deduplication
+      const existing = reportsRef.current;
+      const combined = [...mappedServerReports];
+      for (const loc of existing) {
+        if (!combined.some((c) => c.id === loc.id)) {
+          combined.push(loc);
+        }
+      }
+      reportsRef.current = combined;
+      setReports(combined);
+      await AsyncStorage.setItem(STORAGE_KEYS.reports, JSON.stringify(combined)).catch(() => undefined);
+    } catch {
+      // Keep existing local reports if backend is offline
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -202,9 +278,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         setReports(parsedReports);
       }
       setStorageReady(true);
+      // Fetch latest reports from StepAble backend
+      void refreshReports();
     }).catch(() => setStorageReady(true));
     return () => { cancelled = true; };
-  }, []);
+  }, [refreshReports]);
 
   useEffect(() => {
     if (storageReady) void AsyncStorage.setItem(STORAGE_KEYS.preferences, JSON.stringify(preferences));
@@ -225,6 +303,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const removeSavedPlace = useCallback(async (id: string) => {
     setSavedPlaces((previous) => previous.filter((item) => item.id !== id));
   }, []);
+
   const addReport = useCallback(async (report: Omit<LocalReport, 'id' | 'createdAt'>) => {
     const savedReport: LocalReport = { ...report, id: `${Date.now()}`, createdAt: new Date().toISOString() };
     const nextReports = [savedReport, ...reportsRef.current];
@@ -250,13 +329,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     savePlace,
     removeSavedPlace,
     reports,
+    refreshReports,
     addReport,
     navigationPlan,
     setNavigationPlan,
   }), [
     location, placeLabel, locationStatus, locationMessage, isLocating, refreshLocation,
     weather, weatherMessage, refreshWeather, timeNow, preferences, updatePreferences, savedPlaces,
-    savePlace, removeSavedPlace, reports, addReport, navigationPlan,
+    savePlace, removeSavedPlace, reports, refreshReports, addReport, navigationPlan,
   ]);
 
   return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;

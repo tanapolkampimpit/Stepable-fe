@@ -2,12 +2,15 @@ import { issueLabel, severityLabel } from '../../i18n/reports';
 import { t, useLanguage } from '../../i18n';
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { AppText as Text } from '../../components/ui/AppText';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { MapPreview } from '../../components/maps/MapPreview';
 import { Screen } from '../../components/layout/Screen';
 import { useAppData, type LocalReport } from '../../providers/app-data';
 import { distanceMeters } from '../../services/geo';
+import { statusToThai } from '../../services/api';
 import { colors } from '../../theme';
 import { router } from 'expo-router';
 
@@ -16,8 +19,10 @@ const ALL = 'all';
 export default function AlertsPage() {
   useLanguage();
   const { reports, location } = useAppData();
+  const { reports, refreshReports, location } = useAppData();
   const [active, setActive] = useState(ALL);
   const [filtersVisible, setFiltersVisible] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const categories = useMemo(() => [ALL, ...Array.from(new Set(reports.map((report) => report.type)))], [reports]);
   const visibleReports = useMemo(() => active === ALL ? reports : reports.filter((report) => report.type === active), [active, reports]);
   const markers = reports.map((report) => ({
@@ -26,6 +31,15 @@ export default function AlertsPage() {
     coordinates: report.coordinates,
     color: report.severity === 'high' ? '#DC2626' : report.severity === 'medium' ? '#F97316' : '#2563EB',
   }));
+
+  const onRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshReports();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshReports]);
 
   const openReportRoute = (report: LocalReport) => router.push({
     pathname: '/(tabs)/routes',
@@ -38,6 +52,11 @@ export default function AlertsPage() {
         <View style={styles.headerSpacer} />
         <Text style={styles.title}>{t('common.safetyAlerts')}</Text>
         <Pressable onPress={() => setFiltersVisible((value) => !value)} style={styles.filterIcon} accessibilityRole="button" accessibilityLabel={filtersVisible ? t('alerts.hideFilters') : t('alerts.showFilters')} accessibilityState={{ expanded: filtersVisible }}>
+        <Pressable onPress={onRefresh} disabled={isRefreshing} style={styles.refreshIcon} accessibilityRole="button" accessibilityLabel="รีเฟรชรายงาน">
+          {isRefreshing ? <ActivityIndicator size="small" color={colors.forest} /> : <Icon name="refresh" size={19} color={colors.forest} />}
+        </Pressable>
+        <Text style={styles.title}>แจ้งเตือนความปลอดภัย</Text>
+        <Pressable onPress={() => setFiltersVisible((value) => !value)} style={styles.filterIcon} accessibilityRole="button" accessibilityLabel={filtersVisible ? 'ซ่อนตัวกรอง' : 'แสดงตัวกรอง'} accessibilityState={{ expanded: filtersVisible }}>
           <Icon name="sliders" size={21} color={colors.forest} />
         </Pressable>
       </View>
@@ -51,11 +70,23 @@ export default function AlertsPage() {
         const icon: IconName = report.type === 'poor_lighting' ? 'sun' : report.type === 'damaged_sidewalk' ? 'route' : 'warning';
         const distance = location ? formatDistance(distanceMeters(location, report.coordinates)) : t('alerts.gpsUnavailable');
         return <Pressable key={report.id} onPress={() => openReportRoute(report)} style={styles.card} accessibilityRole="button" accessibilityLabel={t('alerts.tapForDirections', { value0: issueLabel(report.type), value1: distance })}>
+      <View style={styles.sourceNote}><Icon name="info" size={14} color={colors.forest} /><Text style={styles.sourceText}>ข้อมูลรายงานเชื่อมต่อกับ StepAble API · {reports.length} รายงานในระบบ</Text></View>
+      <MapPreview compact center={location} userLocation={location} markers={markers} />
+      {visibleReports.length ? <View style={styles.list}>{visibleReports.map((report) => {
+        const tone = report.severity === 'สูง' ? 'red' : report.severity === 'ปานกลาง' ? 'orange' : 'blue';
+        const icon: IconName = report.type.includes('แสง') || report.type.includes('มืด') ? 'sun' : report.type.includes('ทางเท้า') ? 'route' : 'warning';
+        const distance = location ? formatDistance(distanceMeters(location, report.coordinates)) : 'GPS ไม่พร้อม';
+        const statusLabel = report.status ? statusToThai(report.status) : null;
+        return <Pressable key={report.id} onPress={() => openReportRoute(report)} style={styles.card} accessibilityRole="button" accessibilityLabel={`${report.type}, ${distance}. แตะเพื่อดูเส้นทาง`}>
           <View style={[styles.alertIcon, styles[tone]]}><Icon name={icon} size={24} color={iconColors[tone]} /></View>
           <View style={styles.cardCopy}>
             <Text numberOfLines={1} style={styles.cardTitle}>{issueLabel(report.type)}</Text>
             <Text numberOfLines={1} style={styles.place}>{report.description || `${report.coordinates.latitude.toFixed(4)}, ${report.coordinates.longitude.toFixed(4)}`}</Text>
             <View style={[styles.badge, styles[`${tone}Badge`]]}><Text style={[styles.badgeText, { color: iconColors[tone] }]}>{report.severity === 'high' ? t('alerts.highRisk') : t('alerts.severity', { value0: severityLabel(report.severity) })}</Text></View>
+            <View style={styles.badgesRow}>
+              <View style={[styles.badge, styles[`${tone}Badge`]]}><Text style={[styles.badgeText, { color: iconColors[tone] }]}>{report.severity === 'สูง' ? 'เสี่ยงสูง' : `ความรุนแรง${report.severity}`}</Text></View>
+              {statusLabel ? <View style={[styles.badge, styles.statusBadge]}><Text style={styles.statusBadgeText}>{statusLabel}</Text></View> : null}
+            </View>
           </View>
           <View style={styles.meta}><Text style={styles.metaText}>{distance}</Text><Text style={styles.metaText}>{formatAge(report.createdAt)}</Text><Icon name="chevron-right" size={18} color="#174589" /></View>
         </Pressable>;
@@ -64,6 +95,9 @@ export default function AlertsPage() {
         <Text style={styles.emptyTitle}>{reports.length ? t('alerts.noReportsInThisCategory') : t('alerts.noReportsOnThisDeviceYet')}</Text>
         <Text style={styles.emptyText}>{reports.length ? t('alerts.selectAllOrAnotherCategoryToView') : t('alerts.reportAnIssueWithItsGpsLocation')}</Text>
         <Pressable onPress={() => router.push('/report-issue')} style={styles.reportButton} accessibilityRole="button"><Icon name="flag" size={17} color="#FFFFFF" /><Text style={styles.reportButtonText}>{t('ai.reportAnIssue')}</Text></Pressable>
+        <Text style={styles.emptyTitle}>{reports.length ? 'ไม่มีรายงานในหมวดนี้' : 'ยังไม่มีรายงานปัญหาในระบบ'}</Text>
+        <Text style={styles.emptyText}>{reports.length ? 'เลือก “ทั้งหมด” หรือหมวดอื่นเพื่อดูรายงาน' : 'รายงานปัญหาพร้อมพิกัด GPS เพื่อส่งข้อมูลไปยัง StepAble API ได้ที่นี่'}</Text>
+        <Pressable onPress={() => router.push('/report-issue')} style={styles.reportButton} accessibilityRole="button"><Icon name="flag" size={17} color="#FFFFFF" /><Text style={styles.reportButtonText}>รายงานปัญหา</Text></Pressable>
       </View>}
     </Screen>
   );
@@ -85,9 +119,13 @@ function formatAge(createdAt: string) {
 const iconColors = { red: '#DC2626', orange: '#F97316', blue: '#2563EB' };
 const styles = StyleSheet.create({
   content: { backgroundColor: '#F6FAFF' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, headerSpacer: { width: 42 }, title: { color: '#102A72', fontSize: 20, fontWeight: '800' }, filterIcon: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, refreshIcon: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' }, headerSpacer: { width: 42 }, title: { color: '#102A72', fontSize: 20, fontWeight: '800' }, filterIcon: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center' },
   filters: { flexDirection: 'row', gap: 8, paddingRight: 4 }, filter: { minHeight: 40, borderRadius: 20, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 15 }, filterActive: { backgroundColor: colors.forest }, filterText: { color: '#334E7D', fontSize: 10, fontWeight: '700' }, filterTextActive: { color: '#FFFFFF' },
   sourceNote: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 2 }, sourceText: { flex: 1, color: '#64748B', fontSize: 9, lineHeight: 13 },
-  list: { gap: 10 }, card: { minHeight: 92, borderRadius: 19, backgroundColor: '#FFFFFF', flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, shadowColor: '#0F172A', shadowOpacity: 0.05, shadowRadius: 9, elevation: 2 }, alertIcon: { width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center' }, red: { backgroundColor: '#FEE2E2' }, orange: { backgroundColor: '#FFEDD5' }, blue: { backgroundColor: '#DBEAFE' }, cardCopy: { flex: 1, gap: 3, minWidth: 0 }, cardTitle: { color: '#102A72', fontSize: 13, fontWeight: '800' }, place: { color: '#64748B', fontSize: 9 }, badge: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginTop: 2 }, redBadge: { backgroundColor: '#FEE2E2' }, orangeBadge: { backgroundColor: '#FFEDD5' }, blueBadge: { backgroundColor: '#DBEAFE' }, badgeText: { fontSize: 8, fontWeight: '800' }, meta: { alignItems: 'flex-end', gap: 4 }, metaText: { color: '#64748B', fontSize: 8 },
+  list: { gap: 10 }, card: { minHeight: 92, borderRadius: 19, backgroundColor: '#FFFFFF', flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, shadowColor: '#0F172A', shadowOpacity: 0.05, shadowRadius: 9, elevation: 2 }, alertIcon: { width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center' }, red: { backgroundColor: '#FEE2E2' }, orange: { backgroundColor: '#FFEDD5' }, blue: { backgroundColor: '#DBEAFE' }, cardCopy: { flex: 1, gap: 3, minWidth: 0 }, cardTitle: { color: '#102A72', fontSize: 13, fontWeight: '800' }, place: { color: '#64748B', fontSize: 9 },
+  badgesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 3 },
+  badge: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 }, redBadge: { backgroundColor: '#FEE2E2' }, orangeBadge: { backgroundColor: '#FFEDD5' }, blueBadge: { backgroundColor: '#DBEAFE' }, badgeText: { fontSize: 8, fontWeight: '800' },
+  statusBadge: { backgroundColor: '#F1F5F9', borderWidth: 1, borderColor: '#CBD5E1' }, statusBadgeText: { fontSize: 8, fontWeight: '700', color: '#475569' },
+  meta: { alignItems: 'flex-end', gap: 4 }, metaText: { color: '#64748B', fontSize: 8 },
   emptyCard: { alignItems: 'center', padding: 20, borderRadius: 20, backgroundColor: '#FFFFFF', gap: 8 }, emptyIcon: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#EAF2FF', alignItems: 'center', justifyContent: 'center' }, emptyTitle: { color: '#102A72', fontSize: 14, fontWeight: '800', textAlign: 'center' }, emptyText: { color: '#64748B', fontSize: 10, lineHeight: 15, textAlign: 'center' }, reportButton: { minHeight: 42, marginTop: 2, paddingHorizontal: 16, borderRadius: 14, backgroundColor: colors.forest, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, reportButtonText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
 });

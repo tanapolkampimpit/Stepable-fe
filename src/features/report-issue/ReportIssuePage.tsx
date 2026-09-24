@@ -10,6 +10,7 @@ import { PageHeader } from '../../components/layout/PageHeader';
 import { Screen } from '../../components/layout/Screen';
 import { useAppData } from '../../providers/app-data';
 import { distanceMeters, reverseGeocodeOsm, type Coordinates } from '../../services/geo';
+import { submitReport as apiSubmitReport, uploadReportPhoto, thaiToCategory, thaiToSeverity } from '../../services/api';
 import { colors } from '../../theme';
 
 
@@ -19,6 +20,9 @@ export default function ReportIssuePage() {
   const { location, placeLabel, locationMessage, isLocating, refreshLocation, addReport } = useAppData();
   const [issue, setIssue] = useState<(typeof issueTypes)[number]>(issueTypes[0]);
   const [severity, setSeverity] = useState<(typeof severities)[number]>('medium');
+  const { location, placeLabel, locationMessage, isLocating, refreshLocation, addReport, refreshReports } = useAppData();
+  const [issue, setIssue] = useState(issueTypes[0]);
+  const [severity, setSeverity] = useState<(typeof severities)[number]>('ปานกลาง');
   const [description, setDescription] = useState('');
   const [notice, setNotice] = useMessageState('');
   const [busy, setBusy] = useState(false);
@@ -87,6 +91,54 @@ export default function ReportIssuePage() {
       router.replace('/(tabs)/alerts');
     } catch {
       setNotice(message('reportissue.couldNotSaveTheReportStorageMay'));
+      let uploadedPhotoUrl: string | null = null;
+      if (imageUri) {
+        setNotice('กำลังอัปโหลดรูปภาพไปยังเซิร์ฟเวอร์ StepAble…');
+        try {
+          const uploadRes = await uploadReportPhoto(imageUri);
+          uploadedPhotoUrl = uploadRes.publicUrl;
+        } catch (uploadErr) {
+          console.warn('Upload photo failed, continuing without photo URL:', uploadErr);
+        }
+      }
+
+      setNotice('กำลังส่งรายงานปัญหาไปยัง StepAble API…');
+      let serverReportId: string | undefined;
+      try {
+        const created = await apiSubmitReport({
+          category: thaiToCategory(issue),
+          severity: thaiToSeverity(severity),
+          title: issue,
+          description: description.trim() || undefined,
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude,
+          photoUrl: uploadedPhotoUrl,
+        });
+        serverReportId = created.id;
+      } catch (apiErr) {
+        console.warn('Backend submit failed, saving locally:', apiErr);
+      }
+
+      await addReport({
+        type: issue,
+        severity,
+        description: description.trim(),
+        coordinates,
+        ...(uploadedPhotoUrl || imageUri ? { imageUri: (uploadedPhotoUrl || imageUri) as string } : {}),
+        status: serverReportId ? 'submitted' : undefined,
+      });
+
+      void refreshReports();
+
+      Alert.alert(
+        'ส่งรายงานปัญหาสำเร็จ',
+        serverReportId
+          ? 'ข้อมูลปัญหาถูกส่งไปยัง StepAble API เรียบร้อยแล้ว ขอบคุณที่ร่วมพัฒนาทางเท้าศรีราชา'
+          : 'บันทึกรายงานในอุปกรณ์เรียบร้อยแล้ว (ออฟไลน์)',
+      );
+      router.replace('/(tabs)/alerts');
+    } catch {
+      setNotice('บันทึกรายงานไม่สำเร็จ โปรดลองอีกครั้ง');
     } finally {
       setBusy(false);
     }
@@ -124,6 +176,9 @@ export default function ReportIssuePage() {
       <View style={styles.warning}><Icon name="info" size={17} color={colors.forest} /><Text style={styles.warningText}>{t('reportissue.savedOnThisDeviceOnlyThereIs')}</Text></View>
       <Pressable onPress={() => { void submitReport(); }} disabled={busy || !coordinates} style={[styles.submit, (!coordinates || busy) && styles.submitDisabled]} accessibilityRole="button" accessibilityState={{ disabled: busy || !coordinates }}>
         {busy ? <ActivityIndicator color={colors.paper} /> : <Text style={styles.submitText}>{t('reportissue.saveReport')}</Text>}
+      <View style={styles.warning}><Icon name="info" size={17} color={colors.forest} /><Text style={styles.warningText}>ข้อมูลรายงานจะถูกส่งไปยัง StepAble API เพื่อการตรวจสอบและปรับปรุงทางเท้าในพื้นที่</Text></View>
+      <Pressable onPress={() => { void submitReport(); }} disabled={busy || !coordinates} style={[styles.submit, (!coordinates || busy) && styles.submitDisabled]} accessibilityRole="button" accessibilityState={{ disabled: busy || !coordinates }}>
+        {busy ? <ActivityIndicator color={colors.paper} /> : <Text style={styles.submitText}>ส่งรายงานปัญหา</Text>}
         {!busy ? <Icon name="arrow-right" size={18} color={colors.paper} /> : null}
       </Pressable>
     </Screen>

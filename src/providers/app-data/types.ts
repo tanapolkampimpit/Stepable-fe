@@ -26,6 +26,7 @@ export type LocalReport = {
   coordinates: Coordinates;
   createdAt: string;
   imageUri?: string;
+  status?: string;
 };
 
 export type CurrentLocation = Coordinates & { accuracy: number | null };
@@ -35,6 +36,9 @@ export type CurrentWeather = {
   code: number;
   humidity?: number;
   timezone: string;
+  condition?: string;
+  advisory?: string;
+  isSafeForWalking?: boolean;
 };
 
 export type NavigationPlan = {
@@ -61,6 +65,7 @@ export type AppDataValue = {
   savePlace: (place: SavedPlace) => Promise<void>;
   removeSavedPlace: (id: string) => Promise<void>;
   reports: LocalReport[];
+  refreshReports: () => Promise<void>;
   addReport: (report: Omit<LocalReport, 'id' | 'createdAt'>) => Promise<void>;
   navigationPlan: NavigationPlan | null;
   setNavigationPlan: Dispatch<SetStateAction<NavigationPlan | null>>;
