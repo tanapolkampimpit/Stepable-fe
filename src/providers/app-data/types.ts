@@ -1,3 +1,4 @@
+import type { IssueType, Severity } from '../../i18n/reports';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Coordinates, WalkingRoute } from '../../services/geo';
 
@@ -19,8 +20,8 @@ export type SavedPlace = {
 
 export type LocalReport = {
   id: string;
-  type: string;
-  severity: 'ต่ำ' | 'ปานกลาง' | 'สูง';
+  type: IssueType;
+  severity: Severity;
   description: string;
   coordinates: Coordinates;
   createdAt: string;

@@ -1,3 +1,5 @@
+import { t, message, LocalizedError, getLanguage } from '../i18n/core';
+import { getAiApiUrl } from './ai';
 import { planRoute, fetchPlaces, type BackendRouteAlternative } from './api';
 
 export type Coordinates = { latitude: number; longitude: number };
@@ -85,6 +87,36 @@ type PhotonFeature = {
 const PHOTON_API = 'https://photon.komoot.io';
 
 export async function searchOsmPlaces(query: string, near?: Coordinates): Promise<MapPlace[]> {
+  const params = new URLSearchParams({ q: query.trim(), limit: '12', lang: getLanguage() === 'en' ? 'en' : 'default' });
+  if (near) {
+    params.set('lat', String(near.latitude));
+    params.set('lon', String(near.longitude));
+  }
+
+  const response = await fetch(`${PHOTON_API}/api/?${params.toString()}`, {
+    headers: { Accept: 'application/geo+json, application/json' },
+  });
+  if (!response.ok) throw new LocalizedError(message('service.couldNotSearchForPlacesTryAgain'));
+
+  const data = (await response.json()) as { features?: PhotonFeature[] };
+  return (data.features ?? []).flatMap((feature) => {
+    const props = feature.properties;
+    const point = feature.geometry?.coordinates;
+    if (!props?.name || !point || point.length < 2) return [];
+    const [longitude, latitude] = point;
+    const placeLine = [props.street, props.housenumber, props.locality ?? props.district ?? props.city ?? props.county]
+      .filter(Boolean)
+      .join(' ');
+    const category = [props.osm_key, props.osm_value].filter(Boolean).join(' · ');
+
+    return [{
+      id: `${props.osm_type ?? 'place'}-${props.osm_id ?? `${latitude}-${longitude}`}`,
+      name: props.name,
+      description: [placeLine, props.state, props.country].filter(Boolean).join(', '),
+      category: category || props.type || t('service.openstreetmapPlace'),
+      coordinates: { latitude, longitude },
+    }];
+  });
   const cleanQuery = query.trim();
   let backendPlaces: MapPlace[] = [];
 
@@ -157,7 +189,7 @@ export async function reverseGeocodeOsm(coordinates: Coordinates): Promise<strin
     lat: String(coordinates.latitude),
     lon: String(coordinates.longitude),
     limit: '1',
-    lang: 'default',
+    lang: getLanguage() === 'en' ? 'en' : 'default',
   });
   const response = await fetch(`${PHOTON_API}/reverse?${params.toString()}`, {
     headers: { Accept: 'application/geo+json, application/json' },
@@ -211,6 +243,24 @@ export async function getWalkingRoute(
   preferences: WalkingPreferences = {},
 ): Promise<WalkingRoute> {
   try {
+    response = await fetch(`${endpoint}/v1/routes/walking`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'Accept-Language': getLanguage() },
+      body: JSON.stringify({
+        origin,
+        destination,
+        preferences,
+        isNight: hour < 6 || hour >= 18,
+      }),
+    });
+  } catch {
+    if (/localhost|127\.0\.0\.1/.test(endpoint)) {
+      throw new LocalizedError(message('service.cannotConnectToUseYourComputerS', { value0: endpoint }));
+    }
+    throw new LocalizedError(message('service.cannotConnectToTheAiServerAt', { value0: endpoint }));
+  }
+  if (!response.ok) {
+    throw new LocalizedError(message('service.aiServerReturnedStatus', { value0: response.status }));
     const planResponse = await planRoute({
       origin,
       destination,
@@ -376,10 +426,10 @@ export function getRouteProgress(route: WalkingRoute, current: Coordinates): Rou
 
 export function getManeuverInstruction(maneuver: WalkingManeuver): string {
   const instruction = `${maneuver.verbal_succinct_transition_instruction ?? ''} ${maneuver.instruction}`.toLowerCase();
-  if (instruction.includes('destination') || maneuver.type === 5) return 'ถึงจุดหมาย';
-  if (instruction.includes('u-turn')) return 'กลับตัว';
-  if (instruction.includes('left')) return 'เลี้ยวซ้าย';
-  if (instruction.includes('right')) return 'เลี้ยวขวา';
-  if (instruction.includes('straight') || instruction.includes('continue') || instruction.includes('walk')) return 'เดินตรงไป';
-  return 'เดินตามเส้นทาง';
+  if (instruction.includes('destination') || maneuver.type === 5) return t('service.arriveAtYourDestination');
+  if (instruction.includes('u-turn')) return t('service.makeAUTurn');
+  if (instruction.includes('left')) return t('service.turnLeft');
+  if (instruction.includes('right')) return t('service.turnRight');
+  if (instruction.includes('straight') || instruction.includes('continue') || instruction.includes('walk')) return t('service.continueStraight');
+  return t('service.followTheRoute');
 }

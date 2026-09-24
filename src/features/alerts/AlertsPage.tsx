@@ -1,3 +1,7 @@
+import { issueLabel, severityLabel } from '../../i18n/reports';
+import { t, useLanguage } from '../../i18n';
+import { useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { AppText as Text } from '../../components/ui/AppText';
@@ -10,21 +14,23 @@ import { statusToThai } from '../../services/api';
 import { colors } from '../../theme';
 import { router } from 'expo-router';
 
-const ALL = 'ทั้งหมด';
+const ALL = 'all';
 
 export default function AlertsPage() {
+  useLanguage();
+  const { reports, location } = useAppData();
   const { reports, refreshReports, location } = useAppData();
   const [active, setActive] = useState(ALL);
   const [filtersVisible, setFiltersVisible] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const categories = useMemo(() => [ALL, ...Array.from(new Set(reports.map((report) => report.type)))], [reports]);
   const visibleReports = useMemo(() => active === ALL ? reports : reports.filter((report) => report.type === active), [active, reports]);
-  const markers = useMemo(() => reports.map((report) => ({
+  const markers = reports.map((report) => ({
     id: report.id,
-    label: `${report.type} · ${report.severity}`,
+    label: `${issueLabel(report.type)} · ${severityLabel(report.severity)}`,
     coordinates: report.coordinates,
-    color: report.severity === 'สูง' ? '#DC2626' : report.severity === 'ปานกลาง' ? '#F97316' : '#2563EB',
-  })), [reports]);
+    color: report.severity === 'high' ? '#DC2626' : report.severity === 'medium' ? '#F97316' : '#2563EB',
+  }));
 
   const onRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -37,12 +43,15 @@ export default function AlertsPage() {
 
   const openReportRoute = (report: LocalReport) => router.push({
     pathname: '/(tabs)/routes',
-    params: { destination: report.type, lat: String(report.coordinates.latitude), lon: String(report.coordinates.longitude) },
+    params: { destination: issueLabel(report.type), lat: String(report.coordinates.latitude), lon: String(report.coordinates.longitude) },
   });
 
   return (
     <Screen contentStyle={styles.content}>
       <View style={styles.header}>
+        <View style={styles.headerSpacer} />
+        <Text style={styles.title}>{t('common.safetyAlerts')}</Text>
+        <Pressable onPress={() => setFiltersVisible((value) => !value)} style={styles.filterIcon} accessibilityRole="button" accessibilityLabel={filtersVisible ? t('alerts.hideFilters') : t('alerts.showFilters')} accessibilityState={{ expanded: filtersVisible }}>
         <Pressable onPress={onRefresh} disabled={isRefreshing} style={styles.refreshIcon} accessibilityRole="button" accessibilityLabel="รีเฟรชรายงาน">
           {isRefreshing ? <ActivityIndicator size="small" color={colors.forest} /> : <Icon name="refresh" size={19} color={colors.forest} />}
         </Pressable>
@@ -52,8 +61,15 @@ export default function AlertsPage() {
         </Pressable>
       </View>
       {filtersVisible ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
-        {categories.map((item) => <Pressable key={item} onPress={() => setActive(item)} style={[styles.filter, active === item && styles.filterActive]} accessibilityRole="button" accessibilityState={{ selected: active === item }}><Text style={[styles.filterText, active === item && styles.filterTextActive]}>{item}</Text></Pressable>)}
+        {categories.map((item) => <Pressable key={item} onPress={() => setActive(item)} style={[styles.filter, active === item && styles.filterActive]} accessibilityRole="button" accessibilityState={{ selected: active === item }}><Text style={[styles.filterText, active === item && styles.filterTextActive]}>{item === ALL ? t('alerts.all') : issueLabel(item)}</Text></Pressable>)}
       </ScrollView> : null}
+      <View style={styles.sourceNote}><Icon name="info" size={14} color={colors.forest} /><Text style={styles.sourceText}>{t('alerts.reportsSavedOnThisDeviceNoPublic')}</Text></View>
+      <MapPreview compact center={location} userLocation={location} markers={markers} />
+      {visibleReports.length ? <View style={styles.list}>{visibleReports.map((report) => {
+        const tone = report.severity === 'high' ? 'red' : report.severity === 'medium' ? 'orange' : 'blue';
+        const icon: IconName = report.type === 'poor_lighting' ? 'sun' : report.type === 'damaged_sidewalk' ? 'route' : 'warning';
+        const distance = location ? formatDistance(distanceMeters(location, report.coordinates)) : t('alerts.gpsUnavailable');
+        return <Pressable key={report.id} onPress={() => openReportRoute(report)} style={styles.card} accessibilityRole="button" accessibilityLabel={t('alerts.tapForDirections', { value0: issueLabel(report.type), value1: distance })}>
       <View style={styles.sourceNote}><Icon name="info" size={14} color={colors.forest} /><Text style={styles.sourceText}>ข้อมูลรายงานเชื่อมต่อกับ StepAble API · {reports.length} รายงานในระบบ</Text></View>
       <MapPreview compact center={location} userLocation={location} markers={markers} />
       {visibleReports.length ? <View style={styles.list}>{visibleReports.map((report) => {
@@ -64,8 +80,9 @@ export default function AlertsPage() {
         return <Pressable key={report.id} onPress={() => openReportRoute(report)} style={styles.card} accessibilityRole="button" accessibilityLabel={`${report.type}, ${distance}. แตะเพื่อดูเส้นทาง`}>
           <View style={[styles.alertIcon, styles[tone]]}><Icon name={icon} size={24} color={iconColors[tone]} /></View>
           <View style={styles.cardCopy}>
-            <Text numberOfLines={1} style={styles.cardTitle}>{report.type}</Text>
+            <Text numberOfLines={1} style={styles.cardTitle}>{issueLabel(report.type)}</Text>
             <Text numberOfLines={1} style={styles.place}>{report.description || `${report.coordinates.latitude.toFixed(4)}, ${report.coordinates.longitude.toFixed(4)}`}</Text>
+            <View style={[styles.badge, styles[`${tone}Badge`]]}><Text style={[styles.badgeText, { color: iconColors[tone] }]}>{report.severity === 'high' ? t('alerts.highRisk') : t('alerts.severity', { value0: severityLabel(report.severity) })}</Text></View>
             <View style={styles.badgesRow}>
               <View style={[styles.badge, styles[`${tone}Badge`]]}><Text style={[styles.badgeText, { color: iconColors[tone] }]}>{report.severity === 'สูง' ? 'เสี่ยงสูง' : `ความรุนแรง${report.severity}`}</Text></View>
               {statusLabel ? <View style={[styles.badge, styles.statusBadge]}><Text style={styles.statusBadgeText}>{statusLabel}</Text></View> : null}
@@ -75,6 +92,9 @@ export default function AlertsPage() {
         </Pressable>;
       })}</View> : <View style={styles.emptyCard}>
         <View style={styles.emptyIcon}><Icon name="bell" size={25} color={colors.forest} /></View>
+        <Text style={styles.emptyTitle}>{reports.length ? t('alerts.noReportsInThisCategory') : t('alerts.noReportsOnThisDeviceYet')}</Text>
+        <Text style={styles.emptyText}>{reports.length ? t('alerts.selectAllOrAnotherCategoryToView') : t('alerts.reportAnIssueWithItsGpsLocation')}</Text>
+        <Pressable onPress={() => router.push('/report-issue')} style={styles.reportButton} accessibilityRole="button"><Icon name="flag" size={17} color="#FFFFFF" /><Text style={styles.reportButtonText}>{t('ai.reportAnIssue')}</Text></Pressable>
         <Text style={styles.emptyTitle}>{reports.length ? 'ไม่มีรายงานในหมวดนี้' : 'ยังไม่มีรายงานปัญหาในระบบ'}</Text>
         <Text style={styles.emptyText}>{reports.length ? 'เลือก “ทั้งหมด” หรือหมวดอื่นเพื่อดูรายงาน' : 'รายงานปัญหาพร้อมพิกัด GPS เพื่อส่งข้อมูลไปยัง StepAble API ได้ที่นี่'}</Text>
         <Pressable onPress={() => router.push('/report-issue')} style={styles.reportButton} accessibilityRole="button"><Icon name="flag" size={17} color="#FFFFFF" /><Text style={styles.reportButtonText}>รายงานปัญหา</Text></Pressable>
@@ -84,16 +104,16 @@ export default function AlertsPage() {
 }
 
 function formatDistance(meters: number) {
-  return meters < 1_000 ? `${Math.round(meters)} เมตร` : `${(meters / 1_000).toFixed(1)} กม.`;
+  return meters < 1_000 ? t('ai.meters', { value0: Math.round(meters) }) : t('alerts.km', { value0: (meters / 1_000).toFixed(1) });
 }
 
 function formatAge(createdAt: string) {
   const elapsed = Math.max(0, Date.now() - new Date(createdAt).getTime());
-  if (!Number.isFinite(elapsed)) return 'เวลาไม่พร้อม';
-  if (elapsed < 60_000) return 'เมื่อสักครู่';
-  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} นาทีที่แล้ว`;
-  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} ชั่วโมงที่แล้ว`;
-  return `${Math.floor(elapsed / 86_400_000)} วันที่แล้ว`;
+  if (!Number.isFinite(elapsed)) return t('alerts.timeUnavailable');
+  if (elapsed < 60_000) return t('alerts.justNow');
+  if (elapsed < 3_600_000) return t('alerts.minutesAgo', { value0: Math.floor(elapsed / 60_000) });
+  if (elapsed < 86_400_000) return t('alerts.hoursAgo', { value0: Math.floor(elapsed / 3_600_000) });
+  return t('alerts.daysAgo', { value0: Math.floor(elapsed / 86_400_000) });
 }
 
 const iconColors = { red: '#DC2626', orange: '#F97316', blue: '#2563EB' };

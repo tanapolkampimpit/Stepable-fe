@@ -1,4 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { issueLabel, severityLabel } from '../../i18n/reports';
+import { errorMessage, t, useLanguage, useMessageState, message, type TranslationKey } from '../../i18n';
+import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Share, StyleSheet, View } from 'react-native';
 import { AppText as Text } from '../../components/ui/AppText';
 import { router, useFocusEffect } from 'expo-router';
@@ -11,47 +13,47 @@ import { useBottomNavigation } from '../../components/navigation/BottomNavigatio
 import { searchOsmPlaces } from '../../services/geo';
 import { colors } from '../../theme';
 
-const categories: { query: string; label: string; icon: IconName }[] = [
-  { query: 'ทางลาดสำหรับรถเข็น', label: 'ทางลาด', icon: 'wheelchair' },
-  { query: 'ทางข้ามคนเดินเท้า', label: 'ทางข้าม', icon: 'crosswalk' },
-  { query: 'สวนสาธารณะ', label: 'สวนสาธารณะ', icon: 'park' },
-];
-
 export default function HomePage() {
+  const categories: { query: string; labelKey: TranslationKey; icon: IconName }[] = [
+    { query: t('home.wheelchairRamp'), labelKey: 'home.ramps', icon: 'wheelchair' },
+    { query: t('home.pedestrianCrossing'), labelKey: 'home.crossings', icon: 'crosswalk' },
+    { query: t('home.parks'), labelKey: 'home.parks', icon: 'park' },
+  ];
+  useLanguage();
   const { setCompact } = useBottomNavigation();
   const { location, placeLabel, locationStatus, locationMessage, isLocating, refreshLocation, weather, weatherMessage, refreshWeather, reports } = useAppData();
   const mapRef = useRef<OpenStreetMapHandle>(null);
   const [places, setPlaces] = useState<OSMMapMarker[]>([]);
   const [showReports, setShowReports] = useState(false);
   const [loadingCategory, setLoadingCategory] = useState(false);
-  const [mapNotice, setMapNotice] = useState('');
+  const [mapNotice, setMapNotice] = useMessageState('');
 
   useFocusEffect(useCallback(() => setCompact(false), [setCompact]));
 
-  const reportMarkers = useMemo(() => reports.map((report) => ({
+  const reportMarkers = reports.map((report) => ({
     id: report.id,
-    label: `${report.type} · ${report.severity}`,
+    label: `${issueLabel(report.type)} · ${severityLabel(report.severity)}`,
     coordinates: report.coordinates,
-    color: report.severity === 'สูง' ? '#dc2626' : report.severity === 'ปานกลาง' ? '#f97316' : '#eab308',
-  })), [reports]);
+    color: report.severity === 'high' ? '#dc2626' : report.severity === 'medium' ? '#f97316' : '#eab308',
+  }));
   const visibleMarkers = showReports ? [...places, ...reportMarkers] : places;
 
-  const showCategory = async (query: string, label: string) => {
+  const showCategory = async (query: string, labelKey: TranslationKey) => {
     setLoadingCategory(true);
-    setMapNotice(`กำลังค้นหา ${label} ใน OpenStreetMap`);
+    setMapNotice(message('home.searchingOpenstreetmapFor', { value0: message(labelKey) }));
     try {
       const near = location ?? await refreshLocation();
       if (!near) {
-        setMapNotice('ต้องอนุญาต GPS เพื่อค้นหาใกล้ตำแหน่งปัจจุบัน');
+        setMapNotice(message('home.allowGpsAccessToSearchNearYour'));
         return;
       }
       const found = await searchOsmPlaces(query, near);
       const mapped = found.map((place) => ({ id: place.id, label: place.name, coordinates: place.coordinates, color: '#2563eb' }));
       setPlaces(mapped);
-      setMapNotice(mapped.length ? `พบ ${mapped.length} แห่ง · แตะหมุดเพื่อดูชื่อ` : `ไม่พบ ${label} ใกล้ตำแหน่งนี้`);
+      setMapNotice(mapped.length ? message('home.foundPlacesTapAPinForIts', { value0: mapped.length }) : message('home.noFoundNearby', { value0: message(labelKey) }));
       if (mapped[0]) mapRef.current?.centerOn(mapped[0].coordinates);
     } catch (error) {
-      setMapNotice(error instanceof Error ? error.message : 'ค้นหาสถานที่ไม่สำเร็จ');
+      setMapNotice(errorMessage(error, 'home.couldNotFindPlaces'));
     } finally {
       setLoadingCategory(false);
     }
@@ -61,7 +63,7 @@ export default function HomePage() {
     const coordinates = location ?? await refreshLocation();
     if (coordinates) {
       mapRef.current?.centerOn(coordinates);
-      setMapNotice('แสดงตำแหน่งจริงจาก GPS');
+      setMapNotice(message('home.showingYourGpsLocation'));
     } else {
       setMapNotice(locationMessage);
     }
@@ -70,16 +72,16 @@ export default function HomePage() {
   const updateWeather = async () => {
     if (!location) await refreshLocation();
     refreshWeather();
-    setMapNotice('กำลังอัปเดตสภาพอากาศตาม GPS จริง');
+    setMapNotice(message('home.updatingWeatherForYourGpsLocation'));
   };
 
   const sharePosition = async () => {
     if (!location) {
-      setMapNotice('อนุญาตตำแหน่งก่อนแชร์พิกัดจริง');
+      setMapNotice(message('home.allowLocationAccessBeforeSharingYourPosition'));
       return;
     }
     const url = `https://www.openstreetmap.org/?mlat=${location.latitude}&mlon=${location.longitude}#map=17/${location.latitude}/${location.longitude}`;
-    await Share.share({ title: 'ตำแหน่ง StepAble', message: `${placeLabel}\n${url}` });
+    await Share.share({ title: t('home.stepableLocation'), message: `${placeLabel}\n${url}` });
   };
 
   const weatherText = weather ? `${Math.round(weather.temperature)}°C · ${weatherLabel(weather.code)}` : locationStatus === 'denied' ? 'Enable GPS' : 'Loading weather';
@@ -88,9 +90,9 @@ export default function HomePage() {
       <OpenStreetMap ref={mapRef} center={location} userLocation={location} markers={visibleMarkers} style={styles.map} />
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.overlay} pointerEvents="box-none">
         <View style={styles.topRow}>
-          <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.pill} accessibilityRole="button" accessibilityLabel="ค้นหาหรือเลือกสถานที่">
+          <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.pill} accessibilityRole="button" accessibilityLabel={t('home.searchOrChooseAPlace')}>
             <Icon name="pin" size={20} color={colors.forest} />
-            <Text numberOfLines={1} style={styles.pillText}>{location ? placeLabel : locationStatus === 'denied' ? 'เปิดตำแหน่งเพื่อดูสถานที่จริง' : 'กำลังหาตำแหน่งจริง…'}</Text>
+            <Text numberOfLines={1} style={styles.pillText}>{location ? placeLabel : locationStatus === 'denied' ? t('home.enableLocationToSeeNearbyPlaces') : t('home.findingYourLocation')}</Text>
             <Icon name="chevron-down" size={16} color={colors.forest} />
           </Pressable>
           <Pressable onPress={() => { void updateWeather(); }} style={({ pressed }) => [styles.weather, pressed && styles.weatherPressed]} accessibilityRole="button" accessibilityLabel={`Weather: ${weatherText}. Tap to refresh`}>
@@ -104,17 +106,17 @@ export default function HomePage() {
           </Pressable>
         </View>
         <View style={styles.search}>
-          <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.searchMain} accessibilityRole="button" accessibilityLabel="ค้นหาสถานที่หรือเส้นทาง">
+          <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.searchMain} accessibilityRole="button" accessibilityLabel={t('home.searchPlacesOrRoutes')}>
             <Icon name="search" size={22} color="#174589" />
-            <Text numberOfLines={1} style={styles.searchValue}>{places.length ? 'แตะหมุดผลค้นหา หรือค้นหาเพิ่ม' : 'ค้นหาสถานที่หรือที่อยู่'}</Text>
+            <Text numberOfLines={1} style={styles.searchValue}>{places.length ? t('home.tapASearchPinOrSearchAgain') : t('home.searchForAPlaceOrAddress')}</Text>
           </Pressable>
-          <Pressable onPress={() => router.push({ pathname: '/(tabs)/search', params: { voice: 'true' } })} hitSlop={8} accessibilityRole="button" accessibilityLabel="เปิดช่องค้นหาเพื่อใช้ไมโครโฟนบนแป้นพิมพ์">
+          <Pressable onPress={() => router.push({ pathname: '/(tabs)/search', params: { voice: 'true' } })} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('home.openSearchToUseYourKeyboardMicrophone')}>
             <Icon name="microphone" size={20} color="#174589" />
           </Pressable>
-          <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.searchButton} accessibilityRole="button" accessibilityLabel="ค้นหา"><Icon name="search" size={22} color="#FFFFFF" /></Pressable>
+          <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.searchButton} accessibilityRole="button" accessibilityLabel={t('common.search')}><Icon name="search" size={22} color="#FFFFFF" /></Pressable>
         </View>
         <View style={styles.categories}>
-          {categories.map((category) => <CategoryButton key={category.label} icon={category.icon} label={category.label} onPress={() => { void showCategory(category.query, category.label); }} />)}
+          {categories.map((category) => <CategoryButton key={category.labelKey} icon={category.icon} label={t(category.labelKey)} onPress={() => { void showCategory(category.query, category.labelKey); }} />)}
         </View>
         {!mapNotice && (locationStatus === 'denied' || locationStatus === 'error') ? (
           <Pressable onPress={() => { void refreshLocation(); }} style={styles.notice} accessibilityRole="button">
@@ -125,15 +127,15 @@ export default function HomePage() {
         {loadingCategory ? <ActivityIndicator style={styles.activity} color={colors.forest} /> : null}
         <View style={styles.mapRail}>
           <View style={styles.railGroup}>
-            <RailButton icon="locate" label={isLocating ? 'กำลังอัปเดตตำแหน่ง' : 'แสดงตำแหน่งปัจจุบัน'} onPress={() => { void centerOnUser(); }} />
-            <RailButton icon="plus" label="ขยายแผนที่" onPress={() => mapRef.current?.zoomIn()} />
-            <RailButton icon="minus" label="ย่อแผนที่" onPress={() => mapRef.current?.zoomOut()} />
+            <RailButton icon="locate" label={isLocating ? t('home.updatingLocation') : t('home.showCurrentLocation')} onPress={() => { void centerOnUser(); }} />
+            <RailButton icon="plus" label={t('home.zoomIn')} onPress={() => mapRef.current?.zoomIn()} />
+            <RailButton icon="minus" label={t('home.zoomOut')} onPress={() => mapRef.current?.zoomOut()} />
           </View>
           <View style={styles.railGroup}>
-            <RailButton icon="map" label={showReports ? 'ซ่อนรายงานในอุปกรณ์นี้' : 'แสดงรายงานในอุปกรณ์นี้'} selected={showReports} onPress={() => setShowReports((value) => !value)} />
-            <RailButton icon="navigation" label="เลือกเส้นทางเดิน" primary onPress={() => router.push('/(tabs)/routes')} />
-            <RailButton icon="send" label="แชร์ตำแหน่งปัจจุบัน" onPress={() => { void sharePosition(); }} />
-            <RailButton icon="warning" label="รายงานปัญหาทางเท้า" onPress={() => router.push('/report-issue')} />
+            <RailButton icon="map" label={showReports ? t('home.hideReportsOnThisDevice') : t('home.showReportsOnThisDevice')} selected={showReports} onPress={() => setShowReports((value) => !value)} />
+            <RailButton icon="navigation" label={t('home.chooseAWalkingRoute')} primary onPress={() => router.push('/(tabs)/routes')} />
+            <RailButton icon="send" label={t('home.shareCurrentLocation')} onPress={() => { void sharePosition(); }} />
+            <RailButton icon="warning" label={t('home.reportASidewalkIssue')} onPress={() => router.push('/report-issue')} />
           </View>
         </View>
         <Pressable onPress={() => { void updateWeather(); }} style={styles.sourceNote} accessibilityRole="button" accessibilityLabel={weatherMessage}>
@@ -145,16 +147,19 @@ export default function HomePage() {
 }
 
 function CategoryButton({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
-  return <Pressable onPress={onPress} style={styles.categoryButton} accessibilityRole="button" accessibilityLabel={`ค้นหา${label}`}><Icon name={icon} size={20} color="#174589" /></Pressable>;
+  useLanguage();
+  return <Pressable onPress={onPress} style={styles.categoryButton} accessibilityRole="button" accessibilityLabel={t('home.searchFor', { value0: label })}><Icon name={icon} size={20} color="#174589" /></Pressable>;
 }
 
 function RailButton({ icon, label, onPress, primary = false, selected = false }: { icon: IconName; label: string; onPress: () => void; primary?: boolean; selected?: boolean }) {
+  useLanguage();
   return <Pressable onPress={onPress} style={[styles.railButton, primary && styles.primaryRail, selected && styles.selectedRail]} accessibilityRole="button" accessibilityLabel={label}>
     <Icon name={icon} size={18} color={primary ? '#FFFFFF' : colors.forest} />
   </Pressable>;
 }
 
 function WeatherGlyph({ code }: { code?: number }) {
+  useLanguage();
   const kind = weatherKind(code);
 
   if (kind === 'sun') {

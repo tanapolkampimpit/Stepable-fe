@@ -1,3 +1,5 @@
+import { issueLabel } from '../../i18n/reports';
+import { errorMessage, renderMessage, type MessageValue, getLocale, t, useLanguage, useMessageState, message } from '../../i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { AppText as Text } from '../../components/ui/AppText';
@@ -12,6 +14,7 @@ import { distanceBetweenRouteIndices, distanceMeters, getManeuverInstruction, ge
 import { colors } from '../../theme';
 
 export default function NavigationPage() {
+  const { locale } = useLanguage();
   const { destination: destinationParam, lat, lon } = useLocalSearchParams<{ destination?: string; lat?: string; lon?: string }>();
   const {
     location, locationMessage, weather, timeNow,
@@ -23,11 +26,11 @@ export default function NavigationPage() {
     if (Number.isFinite(latitude) && Number.isFinite(longitude)) return { latitude, longitude };
     return navigationPlan?.destination.coordinates ?? null;
   }, [lat, lon, navigationPlan]);
-  const destinationName = typeof destinationParam === 'string' ? destinationParam : navigationPlan?.destination.label ?? 'ปลายทาง';
-  const [fallbackResult, setFallbackResult] = useState<{ key: string; route: WalkingRoute | null; error: string } | null>(null);
+  const destinationName = typeof destinationParam === 'string' ? destinationParam : navigationPlan?.destination.label ?? t('navigation.destination');
+  const [fallbackResult, setFallbackResult] = useState<{ key: string; route: WalkingRoute | null; error: MessageValue } | null>(null);
   const [rerouting, setRerouting] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [error, setError] = useMessageState('');
+  const [notice, setNotice] = useMessageState('');
   const announcedStep = useRef(-1);
   const announcedCue = useRef('');
 
@@ -45,18 +48,18 @@ export default function NavigationPage() {
     }).then((nextRoute) => {
       if (active) setFallbackResult({ key: fallbackKey, route: nextRoute, error: '' });
     }).catch((requestError) => {
-      if (active) setFallbackResult({ key: fallbackKey, route: null, error: requestError instanceof Error ? requestError.message : 'คำนวณเส้นทางใหม่ไม่สำเร็จ' });
+      if (active) setFallbackResult({ key: fallbackKey, route: null, error: errorMessage(requestError, 'navigation.couldNotRecalculateTheRoute') });
     });
     return () => { active = false; };
   }, [destination, fallbackKey, hasMatchingPlan, location, preferences.avoidSteps, preferences.wheelchair]);
 
   const route = hasMatchingPlan ? navigationPlan?.route ?? null : fallbackResult?.key === fallbackKey ? fallbackResult.route : null;
   const loading = rerouting || Boolean(!hasMatchingPlan && fallbackKey && fallbackResult?.key !== fallbackKey);
-  const visibleError = error || (fallbackResult?.key === fallbackKey ? fallbackResult.error : '');
+  const visibleError = error || (fallbackResult?.key === fallbackKey ? renderMessage(fallbackResult.error) : '');
 
   const progress = useMemo(() => route && location ? getRouteProgress(route, location) : null, [route, location]);
   const step = progress && route ? route.maneuvers[progress.maneuverIndex] : undefined;
-  const instruction = step ? getManeuverInstruction(step) : route ? 'ถึงจุดหมายแล้ว' : 'กำลังรอเส้นทาง';
+  const instruction = step ? getManeuverInstruction(step) : route ? t('ai.youHaveArrived') : t('navigation.waitingForARoute');
   const stepDistance = step && progress && route ? distanceBetweenRouteIndices(route.coordinates, progress.nearestIndex, step.end_shape_index) : 0;
   const eta = route && progress ? new Date(timeNow + (route.durationSeconds * progress.remainingFraction * 1_000)) : null;
   const finished = Boolean(destination && location && distanceMeters(location, destination) <= 25);
@@ -78,15 +81,15 @@ export default function NavigationPage() {
   useEffect(() => {
     if (!step || progress?.maneuverIndex === undefined || !preferences.voiceNavigation) return;
     const bucket = routeAnnouncementBucket(stepDistance);
-    const cueKey = `${progress.maneuverIndex}:${bucket}`;
+    const cueKey = `${locale}:${progress.maneuverIndex}:${bucket}`;
     if (announcedCue.current === cueKey) return;
     announcedCue.current = cueKey;
     const spoken = finished
-      ? 'ถึงจุดหมายแล้ว'
-      : `อีก ${formatDistance(stepDistance / 1_000)} ${instruction}`;
+      ? t('ai.youHaveArrived')
+      : t('ai.in', { value0: formatDistance(stepDistance / 1_000), value1: instruction });
     Speech.stop();
-    Speech.speak(spoken, { language: 'th-TH', rate: 0.92 });
-  }, [finished, instruction, preferences.voiceNavigation, progress?.maneuverIndex, step, stepDistance]);
+    Speech.speak(spoken, { language: locale, rate: 0.92 });
+  }, [finished, instruction, preferences.voiceNavigation, progress?.maneuverIndex, step, stepDistance, locale]);
 
   useEffect(() => {
     if (!preferences.voiceNavigation) announcedCue.current = '';
@@ -101,7 +104,7 @@ export default function NavigationPage() {
     }
     setRerouting(true);
     setError('');
-    setNotice('กำลังคำนวณจากตำแหน่ง GPS ล่าสุด');
+    setNotice(message('navigation.calculatingFromTheLatestGpsLocation'));
     try {
       const nextRoute = await getWalkingRoute(location, destination, { avoidSteps: preferences.avoidSteps, wheelchair: preferences.wheelchair });
       setNavigationPlan({
@@ -111,9 +114,9 @@ export default function NavigationPage() {
         routePreference: 'current-position',
       });
       announcedStep.current = -1;
-      setNotice('อัปเดตเส้นทางจากตำแหน่งจริงแล้ว');
+      setNotice(message('navigation.routeUpdatedFromYourCurrentLocation'));
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'คำนวณเส้นทางใหม่ไม่สำเร็จ');
+      setError(errorMessage(requestError, 'navigation.couldNotRecalculateTheRoute'));
     } finally {
       setRerouting(false);
     }
@@ -137,13 +140,13 @@ export default function NavigationPage() {
       />
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.overlay} pointerEvents="box-none">
         <View style={styles.instruction}>
-          <Pressable onPress={() => router.back()} style={styles.back} accessibilityRole="button" accessibilityLabel="กลับไปตัวเลือกเส้นทาง"><Icon name="back" size={23} color={colors.forest} /></Pressable>
+          <Pressable onPress={() => router.back()} style={styles.back} accessibilityRole="button" accessibilityLabel={t('navigation.backToRouteOptions')}><Icon name="back" size={23} color={colors.forest} /></Pressable>
           <View style={styles.turnIcon}><Icon name={finished ? 'check' : 'navigation'} size={27} color={colors.forest} /></View>
-          <View style={styles.instructionCopy}><Text numberOfLines={2} style={styles.instructionTitle}>{finished ? 'ถึงจุดหมายแล้ว' : instruction}</Text><Text numberOfLines={1} style={styles.instructionSub}>ไปยัง {destinationName}{step && !finished ? ` · อีก ${formatDistance(stepDistance)}` : ''}</Text></View>
+          <View style={styles.instructionCopy}><Text numberOfLines={2} style={styles.instructionTitle}>{finished ? t('ai.youHaveArrived') : instruction}</Text><Text numberOfLines={1} style={styles.instructionSub}>{t('navigation.to')}{destinationName}{step && !finished ? t('navigation.in', { value0: formatDistance(stepDistance / 1_000) }) : ''}</Text></View>
         </View>
         <View style={styles.etaStack}>
-          <View style={styles.eta}><Icon name="clock" size={17} color={colors.forest} /><Text style={styles.etaText}>{eta && !finished ? `ถึง ${formatTime(eta, weather?.timezone)}` : finished ? 'ถึงแล้ว' : 'กำลังคำนวณ'}</Text></View>
-          <View style={styles.eta}><Icon name="pin" size={17} color={colors.forest} /><Text style={styles.etaText}>{progress ? `${formatDistance(progress.remainingKm)} เหลือ` : 'รอตำแหน่ง GPS'}</Text></View>
+          <View style={styles.eta}><Icon name="clock" size={17} color={colors.forest} /><Text style={styles.etaText}>{eta && !finished ? t('navigation.arriveAt', { value0: formatTime(eta, weather?.timezone) }) : finished ? t('navigation.arrived') : t('navigation.calculating')}</Text></View>
+          <View style={styles.eta}><Icon name="pin" size={17} color={colors.forest} /><Text style={styles.etaText}>{progress ? t('navigation.remaining', { value0: formatDistance(progress.remainingKm) }) : t('navigation.waitingForGps')}</Text></View>
         </View>
       </SafeAreaView>
 
@@ -151,29 +154,29 @@ export default function NavigationPage() {
         <View style={styles.handle} />
         <View style={styles.progressRow}><Icon name="walk" size={25} color={colors.forest} /><View style={styles.track}><View style={[styles.fill, { width: `${Math.round((1 - (progress?.remainingFraction ?? 1)) * 100)}%` }]} /></View><Icon name="flag" size={22} color="#334E7D" /></View>
         <View style={styles.metrics}>
-          <Metric label="เวลาที่เหลือ" value={route && progress ? formatDuration(route.durationSeconds * progress.remainingFraction) : '—'} />
-          <Metric label="ระยะทางเหลือ" value={progress ? formatDistance(progress.remainingKm) : '—'} />
-          <Metric label="ตำแหน่ง" value={location ? `${location.accuracy ? `±${Math.round(location.accuracy)} ม.` : 'GPS'}` : 'ไม่พร้อม'} green={Boolean(location)} />
+          <Metric label={t('navigation.timeRemaining')} value={route && progress ? formatDuration(route.durationSeconds * progress.remainingFraction) : '—'} />
+          <Metric label={t('navigation.distanceRemaining')} value={progress ? formatDistance(progress.remainingKm) : '—'} />
+          <Metric label={t('navigation.location')} value={location ? `${location.accuracy ? t('navigation.m', { value0: Math.round(location.accuracy) }) : 'GPS'}` : t('navigation.unavailable')} green={Boolean(location)} />
         </View>
         {!location ? <Text style={styles.message}>{locationMessage}</Text> : null}
-        {nearbyReport ? <View style={styles.riskNotice}><Icon name="warning" size={17} color="#B91C1C" /><Text style={styles.riskText}>รายงานในอุปกรณ์นี้: {nearbyReport.report.type} · ห่าง {Math.round(nearbyReport.distance)} ม. · โปรดตรวจสอบหน้างาน</Text></View> : null}
-        {progress?.offRoute && !nearbyReport ? <Pressable onPress={() => { void reroute(); }} style={styles.offRoute}><Text style={styles.offRouteText}>ตำแหน่ง GPS อยู่นอกแนวเส้นทาง · แตะเพื่อคำนวณใหม่</Text></Pressable> : null}
+        {nearbyReport ? <View style={styles.riskNotice}><Icon name="warning" size={17} color="#B91C1C" /><Text style={styles.riskText}>{t('navigation.nearbyReport', { type: issueLabel(nearbyReport.report.type), distance: Math.round(nearbyReport.distance) })}</Text></View> : null}
+        {progress?.offRoute && !nearbyReport ? <Pressable onPress={() => { void reroute(); }} style={styles.offRoute}><Text style={styles.offRouteText}>{t('navigation.gpsIsOffRouteTapToRecalculate')}</Text></Pressable> : null}
         {notice ? <Text style={styles.message} accessibilityLiveRegion="polite">{notice}</Text> : null}
-        {visibleError ? <Pressable onPress={() => { void reroute(); }} style={styles.error} accessibilityRole="button"><Text style={styles.errorText}>{visibleError} · แตะเพื่อลองอีกครั้ง</Text></Pressable> : null}
+        {visibleError ? <Pressable onPress={() => { void reroute(); }} style={styles.error} accessibilityRole="button"><Text style={styles.errorText}>{visibleError}{t('navigation.tapToRetry')}</Text></Pressable> : null}
         <View style={styles.actions}>
-          <Pressable onPress={() => { void Speech.stop(); router.push({ pathname: '/(tabs)/ai', params: { live: 'true' } }); }} style={styles.aiButton} accessibilityRole="button"><Icon name="camera" size={20} color="#FFFFFF" /><Text style={styles.aiText}>เปิด AI สด</Text></Pressable>
-          <Pressable onPress={() => router.push({ pathname: '/report-issue', params: location ? { lat: String(location.latitude), lon: String(location.longitude) } : {} })} style={styles.report} accessibilityRole="button"><Icon name="warning" size={19} color="#334E7D" /><Text style={styles.reportText}>รายงานปัญหา</Text></Pressable>
+          <Pressable onPress={() => { void Speech.stop(); router.push({ pathname: '/(tabs)/ai', params: { live: 'true' } }); }} style={styles.aiButton} accessibilityRole="button"><Icon name="camera" size={20} color="#FFFFFF" /><Text style={styles.aiText}>{t('navigation.openLiveAi')}</Text></Pressable>
+          <Pressable onPress={() => router.push({ pathname: '/report-issue', params: location ? { lat: String(location.latitude), lon: String(location.longitude) } : {} })} style={styles.report} accessibilityRole="button"><Icon name="warning" size={19} color="#334E7D" /><Text style={styles.reportText}>{t('ai.reportAnIssue')}</Text></Pressable>
         </View>
         <View style={styles.endRow}>
-          {loading ? <ActivityIndicator color={colors.forest} /> : <Pressable onPress={() => { void reroute(); }} style={styles.smallAction} accessibilityRole="button"><Icon name="locate" size={16} color={colors.forest} /><Text style={styles.smallActionText}>อัปเดต/คำนวณเส้นทางใหม่</Text></Pressable>}
-          <Pressable onPress={endNavigation} accessibilityRole="button"><Text style={styles.endText}>จบการนำทาง</Text></Pressable>
+          {loading ? <ActivityIndicator color={colors.forest} /> : <Pressable onPress={() => { void reroute(); }} style={styles.smallAction} accessibilityRole="button"><Icon name="locate" size={16} color={colors.forest} /><Text style={styles.smallActionText}>{t('navigation.updateRecalculateRoute')}</Text></Pressable>}
+          <Pressable onPress={endNavigation} accessibilityRole="button"><Text style={styles.endText}>{t('navigation.endNavigation')}</Text></Pressable>
         </View>
       </View>
     </View>
   );
 }
 
-function formatDistance(km: number) { return km < 1 ? `${Math.max(0, Math.round(km * 1_000))} ม.` : `${km.toFixed(1)} กม.`; }
+function formatDistance(km: number) { return km < 1 ? t('navigation.m2', { value0: Math.max(0, Math.round(km * 1_000)) }) : t('alerts.km', { value0: km.toFixed(1) }); }
 function routeAnnouncementBucket(distanceMeters: number) {
   if (distanceMeters <= 8) return 'now';
   if (distanceMeters <= 20) return '20';
@@ -182,12 +185,13 @@ function routeAnnouncementBucket(distanceMeters: number) {
   if (distanceMeters <= 200) return '200';
   return String(Math.ceil(distanceMeters / 100) * 100);
 }
-function formatDuration(seconds: number) { const minutes = Math.max(0, Math.ceil(seconds / 60)); return minutes >= 60 ? `${Math.floor(minutes / 60)} ชม. ${minutes % 60} นาที` : `${minutes} นาที`; }
+function formatDuration(seconds: number) { const minutes = Math.max(0, Math.ceil(seconds / 60)); return minutes >= 60 ? t('navigation.hrMin', { value0: Math.floor(minutes / 60), value1: minutes % 60 }) : t('navigation.min', { value0: minutes }); }
 function formatTime(date: Date, timezone?: string) {
-  return date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false, ...(timezone ? { timeZone: timezone } : {}) });
+  return date.toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit', hour12: false, ...(timezone ? { timeZone: timezone } : {}) });
 }
 
 function Metric({ label, value, green = false }: { label: string; value: string; green?: boolean }) {
+  useLanguage();
   return <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text numberOfLines={1} style={[styles.metricValue, green && styles.green]}>{value}</Text></View>;
 }
 

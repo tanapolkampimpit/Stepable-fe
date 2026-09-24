@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { detectionDistance, detectionPosition } from '../../i18n/detections';
+import { errorMessage, t, useLanguage, useMessageState } from '../../i18n';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, Pressable, Share, StyleSheet, View } from 'react-native';
 import { CameraView, useCameraPermissions, type CameraType } from 'expo-camera';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -12,6 +14,7 @@ import { distanceBetweenRouteIndices, distanceMeters, getManeuverInstruction, ge
 import { colors } from '../../theme';
 
 export default function AiPage() {
+  const { locale } = useLanguage();
   const { live } = useLocalSearchParams<{ live?: string }>();
   const cameraRef = useRef<CameraView>(null);
   const [permission, requestPermission] = useCameraPermissions();
@@ -19,9 +22,9 @@ export default function AiPage() {
   const [facing, setFacing] = useState<CameraType>('back');
   const [torch, setTorch] = useState(false);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
-  const [cameraError, setCameraError] = useState('');
+  const [cameraError, setCameraError] = useMessageState('');
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
-  const [analysisError, setAnalysisError] = useState('');
+  const [analysisError, setAnalysisError] = useMessageState('');
   const [analyzing, setAnalyzing] = useState(false);
   const [liveMode, setLiveMode] = useState(() => live !== 'false');
   const liveBusy = useRef(false);
@@ -29,14 +32,14 @@ export default function AiPage() {
   const lastRouteAnnouncement = useRef('');
   const navigationCueRef = useRef<NavigationCue | null>(null);
 
-  const navigationCue = useMemo<NavigationCue | null>(() => {
+  const navigationCue = ((): NavigationCue | null => {
     if (!liveMode || !navigationPlan || !location) return null;
     if (distanceMeters(location, navigationPlan.destination.coordinates) <= 25) {
-      return { key: 'destination', instruction: 'ถึงจุดหมายแล้ว', distanceMeters: 0, maneuverIndex: -1 };
+      return { key: 'destination', instruction: t('ai.youHaveArrived'), distanceMeters: 0, maneuverIndex: -1 };
     }
     const progress = getRouteProgress(navigationPlan.route, location);
     if (progress.offRoute) {
-      return { key: 'off-route', instruction: 'อยู่นอกเส้นทาง', distanceMeters: 0, maneuverIndex: -1 };
+      return { key: 'off-route', instruction: t('ai.offRoute'), distanceMeters: 0, maneuverIndex: -1 };
     }
     const maneuver = navigationPlan.route.maneuvers[progress.maneuverIndex];
     if (!maneuver) return null;
@@ -46,7 +49,7 @@ export default function AiPage() {
       distanceMeters: distanceBetweenRouteIndices(navigationPlan.route.coordinates, progress.nearestIndex, maneuver.end_shape_index),
       maneuverIndex: progress.maneuverIndex,
     };
-  }, [liveMode, location, navigationPlan]);
+  })();
 
   useEffect(() => {
     navigationCueRef.current = navigationCue;
@@ -59,11 +62,11 @@ export default function AiPage() {
       setAnalysis(await analyzeImage(uri));
     } catch (error) {
       setAnalysis(null);
-      setAnalysisError(error instanceof Error ? error.message : 'เชื่อมต่อ AI server ไม่สำเร็จ');
+      setAnalysisError(errorMessage(error, 'ai.analysisFailed'));
     } finally {
       setAnalyzing(false);
     }
-  }, []);
+  }, [setAnalysisError]);
 
   useEffect(() => {
     if (!liveMode || !permission?.granted || photoUri) return undefined;
@@ -82,10 +85,10 @@ export default function AiPage() {
         if (!navigationCueRef.current && announcement && announcement !== lastAnnouncement.current) {
           lastAnnouncement.current = announcement;
           Speech.stop();
-          Speech.speak(announcement, { language: 'th-TH', rate: 0.95 });
+          Speech.speak(announcement, { language: locale, rate: 0.95 });
         }
       } catch (error) {
-        if (active) setAnalysisError(error instanceof Error ? error.message : 'วิเคราะห์ภาพสดไม่สำเร็จ');
+        if (active) setAnalysisError(errorMessage(error, 'ai.analysisFailed'));
       } finally {
         liveBusy.current = false;
       }
@@ -98,7 +101,7 @@ export default function AiPage() {
       liveBusy.current = false;
       Speech.stop();
     };
-  }, [liveMode, permission?.granted, photoUri]);
+  }, [liveMode, permission?.granted, photoUri, locale, setAnalysisError]);
 
   useEffect(() => {
     if (!liveMode || !navigationCue) {
@@ -106,17 +109,17 @@ export default function AiPage() {
       return;
     }
     const bucket = routeAnnouncementBucket(navigationCue.distanceMeters);
-    const key = `${navigationCue.key}:${bucket}`;
+    const key = `${locale}:${navigationCue.key}:${bucket}`;
     if (key === lastRouteAnnouncement.current) return;
     lastRouteAnnouncement.current = key;
-    const spoken = navigationCue.instruction === 'ถึงจุดหมายแล้ว'
+    const spoken = navigationCue.key === 'destination'
       ? navigationCue.instruction
-      : navigationCue.instruction === 'อยู่นอกเส้นทาง'
-        ? 'สัญญาณ GPS อยู่นอกเส้นทาง กรุณาคำนวณเส้นทางใหม่'
-        : `อีก ${formatGuidanceDistance(navigationCue.distanceMeters)} ${navigationCue.instruction}`;
+      : navigationCue.key === 'off-route'
+        ? t('ai.gpsIndicatesYouAreOffRoutePlease')
+        : t('ai.in', { value0: formatGuidanceDistance(navigationCue.distanceMeters), value1: navigationCue.instruction });
     Speech.stop();
-    Speech.speak(spoken, { language: 'th-TH', rate: 0.92 });
-  }, [liveMode, navigationCue]);
+    Speech.speak(spoken, { language: locale, rate: 0.92 });
+  }, [liveMode, navigationCue, locale]);
 
   const reportPhoto = () => {
     router.push({ pathname: '/report-issue', params: { ...(location ? { lat: String(location.latitude), lon: String(location.longitude) } : {}), ...(photoUri ? { image: photoUri } : {}) } });
@@ -124,16 +127,16 @@ export default function AiPage() {
 
   const speakCurrent = () => {
     const message = navigationCue?.instruction
-      ?? (analysis ? liveAnnouncement(analysis) : 'กำลังวิเคราะห์ภาพ กรุณารอสักครู่');
+      ?? (analysis ? liveAnnouncement(analysis) : t('ai.analyzingTheImagePleaseWait'));
     Speech.stop();
-    Speech.speak(message, { language: 'th-TH', rate: 0.92 });
+    Speech.speak(message, { language: locale, rate: 0.92 });
   };
 
   const shareAiResult = async () => {
     const message = analysis
       ? `StepAble AI: ${formatAnalysis(analysis)}`
-      : 'StepAble AI กำลังตรวจสอบสภาพทางเดิน';
-    await Share.share({ title: 'ผลการตรวจจาก StepAble AI', message });
+      : t('ai.stepableAiIsCheckingTheWalkway');
+    await Share.share({ title: t('ai.stepableAiResults'), message });
   };
 
   const toggleLiveMode = () => {
@@ -164,13 +167,13 @@ export default function AiPage() {
             <View><Text style={styles.brandTitle}>StepAble</Text><Text style={styles.brandSub}>AI Camera</Text></View>
           </View>
           <View style={styles.topPill}>
-            <Pressable onPress={() => setTorch((value) => !value)} style={[styles.topPillButton, torch && styles.topPillButtonActive]} accessibilityRole="button" accessibilityLabel={torch ? 'ปิดไฟฉาย' : 'เปิดไฟฉาย'}><Icon name="flashlight" size={20} color={torch ? '#FFFFFF' : '#111827'} /></Pressable>
-            <Pressable onPress={() => setFacing((value) => value === 'back' ? 'front' : 'back')} style={styles.topPillButton} accessibilityRole="button" accessibilityLabel="สลับกล้องหน้าและกล้องหลัง"><Icon name="swap" size={20} color="#111827" /></Pressable>
+            <Pressable onPress={() => setTorch((value) => !value)} style={[styles.topPillButton, torch && styles.topPillButtonActive]} accessibilityRole="button" accessibilityLabel={torch ? t('ai.turnFlashlightOff') : t('ai.turnFlashlightOn')}><Icon name="flashlight" size={20} color={torch ? '#FFFFFF' : '#111827'} /></Pressable>
+            <Pressable onPress={() => setFacing((value) => value === 'back' ? 'front' : 'back')} style={styles.topPillButton} accessibilityRole="button" accessibilityLabel={t('ai.switchFrontAndRearCameras')}><Icon name="swap" size={20} color="#111827" /></Pressable>
           </View>
         </View> : null}
 
         {!permission?.granted ? <Pressable onPress={() => { void requestPermission(); }} style={styles.permissionCard} accessibilityRole="button">
-          <Icon name="camera" size={24} color={colors.forest} /><Text style={styles.permissionTitle}>อนุญาตให้ใช้กล้อง</Text><Text style={styles.permissionSub}>กล้องใช้เฉพาะเมื่อเปิดหน้านี้ และถ่ายเมื่อคุณกดปุ่มเท่านั้น</Text><Text style={styles.permissionAction}>อนุญาตและเปิดกล้อง</Text>
+          <Icon name="camera" size={24} color={colors.forest} /><Text style={styles.permissionTitle}>{t('ai.allowCameraAccess')}</Text><Text style={styles.permissionSub}>{t('ai.theCameraIsUsedWhileThisPage')}</Text><Text style={styles.permissionAction}>{t('ai.allowAndOpenCamera')}</Text>
         </Pressable> : null}
       </SafeAreaView>
 
@@ -178,47 +181,47 @@ export default function AiPage() {
 
       {permission?.granted ? <View style={styles.voiceDock}>
         {navigationCue ? <View style={styles.voiceStatus} accessibilityLiveRegion="polite">
-          <View style={[styles.voiceStatusDot, navigationCue.instruction === 'อยู่นอกเส้นทาง' && styles.voiceStatusDotWarning]} />
+          <View style={[styles.voiceStatusDot, navigationCue.instruction === t('ai.offRoute') && styles.voiceStatusDotWarning]} />
           <Text numberOfLines={1} style={styles.voiceStatusText}>{navigationCue.instruction} · {formatGuidanceDistance(navigationCue.distanceMeters)}</Text>
-        </View> : analysis || analysisError ? <Pressable onPress={() => { if (photoUri && !analyzing) void runAnalysis(photoUri); }} style={styles.voiceStatus} accessibilityRole="button" accessibilityLabel="วิเคราะห์ภาพด้วย AI">
+        </View> : analysis || analysisError ? <Pressable onPress={() => { if (photoUri && !analyzing) void runAnalysis(photoUri); }} style={styles.voiceStatus} accessibilityRole="button" accessibilityLabel={t('ai.analyzeImageWithAi')}>
           <View style={[styles.voiceStatusDot, analysisError && styles.voiceStatusDotWarning]} />
-          <Text numberOfLines={1} style={styles.voiceStatusText}>{analysisError || (analyzing ? 'กำลังวิเคราะห์ภาพ…' : formatAnalysis(analysis as AiAnalysis))}</Text>
+          <Text numberOfLines={1} style={styles.voiceStatusText}>{analysisError || (analyzing ? t('ai.analyzingImage') : formatAnalysis(analysis as AiAnalysis))}</Text>
         </Pressable> : <View style={styles.voiceStatus} accessibilityLiveRegion="polite">
           <View style={[styles.voiceStatusDot, styles.voiceStatusDotReady]} />
-          <Text numberOfLines={1} style={styles.voiceStatusText}>เชื่อมต่อ AI แล้ว · พร้อมตรวจสอบ</Text>
+          <Text numberOfLines={1} style={styles.voiceStatusText}>{t('ai.waitingForAiAnalysis')}</Text>
         </View>}
         <View style={styles.voiceControls}>
-          <Pressable onPress={reportPhoto} style={styles.voiceCircle} accessibilityRole="button" accessibilityLabel="รายงานปัญหา"><Icon name="flag" size={21} color="#2563EB" /></Pressable>
-          <Pressable onPress={() => { void shareAiResult(); }} style={styles.voiceCircle} accessibilityRole="button" accessibilityLabel="แชร์ผลการตรวจจาก AI"><Icon name="upload" size={21} color="#111827" /></Pressable>
-          <Pressable onPress={toggleLiveMode} style={[styles.voiceStartButton, liveMode && styles.voiceStartButtonActive]} accessibilityRole="button" accessibilityLabel={liveMode ? 'หยุดตรวจด้วย AI' : 'เริ่มตรวจด้วย AI'}>{liveMode ? <Icon name="pause" size={22} color="#FFFFFF" /> : <Text style={[styles.voiceStartText, styles.voiceStartTextIdle]}>AI</Text>}</Pressable>
-          <Pressable onPress={speakCurrent} style={styles.voiceCircle} accessibilityRole="button" accessibilityLabel="อ่านผลการวิเคราะห์ออกเสียง"><Icon name="microphone" size={21} color="#111827" /></Pressable>
-          <Pressable onPress={() => { if (photoUri) { setPhotoUri(null); setAnalysis(null); setAnalysisError(''); } else router.back(); }} style={[styles.voiceCircle, styles.voiceClose]} accessibilityRole="button" accessibilityLabel={photoUri ? 'ถ่ายใหม่' : 'ปิด AI Camera'}><Icon name="close" size={22} color="#FFFFFF" /></Pressable>
+          <Pressable onPress={reportPhoto} style={styles.voiceCircle} accessibilityRole="button" accessibilityLabel={t('ai.reportAnIssue')}><Icon name="flag" size={21} color="#2563EB" /></Pressable>
+          <Pressable onPress={() => { void shareAiResult(); }} style={styles.voiceCircle} accessibilityRole="button" accessibilityLabel={t('ai.shareAiResults')}><Icon name="upload" size={21} color="#111827" /></Pressable>
+          <Pressable onPress={toggleLiveMode} style={[styles.voiceStartButton, liveMode && styles.voiceStartButtonActive]} accessibilityRole="button" accessibilityLabel={liveMode ? t('ai.stopAiDetection') : t('ai.startAiDetection')}>{liveMode ? <Icon name="pause" size={22} color="#FFFFFF" /> : <Text style={[styles.voiceStartText, styles.voiceStartTextIdle]}>AI</Text>}</Pressable>
+          <Pressable onPress={speakCurrent} style={styles.voiceCircle} accessibilityRole="button" accessibilityLabel={t('ai.readAnalysisAloud')}><Icon name="microphone" size={21} color="#111827" /></Pressable>
+          <Pressable onPress={() => { if (photoUri) { setPhotoUri(null); setAnalysis(null); setAnalysisError(''); } else router.back(); }} style={[styles.voiceCircle, styles.voiceClose]} accessibilityRole="button" accessibilityLabel={photoUri ? t('ai.retakePhoto') : t('ai.closeAiCamera')}><Icon name="close" size={22} color="#FFFFFF" /></Pressable>
         </View>
       </View> : null}
     </View>
   );
 }
 
-const aiClassLabels: Record<string, string> = {
-  person: 'คน',
-  vehicle: 'รถยนต์',
-  two_wheeler: 'มอเตอร์ไซค์/จักรยาน',
-  road_sidewalk: 'ถนน/ทางเท้า',
-  building: 'อาคาร',
-  vegetation: 'ต้นไม้/พืช',
-  street_fixture: 'สิ่งกีดขวางริมทาง',
-};
+function getAiClassLabels(): Record<string, string> { return {
+  person: t('ai.person'),
+  vehicle: t('ai.car'),
+  two_wheeler: t('ai.motorcycleBicycle'),
+  road_sidewalk: t('ai.roadSidewalk'),
+  building: t('ai.building'),
+  vegetation: t('ai.vegetation'),
+  street_fixture: t('ai.streetObstacle'),
+}; }
 
 function formatAnalysis(result: AiAnalysis) {
-  const labels = [...new Set(result.obstacles.map((item) => `${aiClassLabels[item.className] || item.className} · ${item.position || 'ตรงหน้า'}`))];
+  const labels = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} · ${detectionPosition(item.position)} · ${detectionDistance(item.distanceBand)}`))];
   const detected = labels.length ? ` (${labels.join(', ')})` : '';
-  return `พบสิ่งกีดขวาง ${result.obstacles.length} จุด${detected} · พื้นที่ทางเดิน ${Math.round(result.sidewalkCoverage * 100)}%`;
+  return t('ai.obstaclesDetectedWalkwayCoverage', { value0: result.obstacles.length, value1: detected, value2: Math.round(result.sidewalkCoverage * 100) });
 }
 
 function liveAnnouncement(result: AiAnalysis) {
-  if (!result.obstacles.length) return 'ไม่พบสิ่งกีดขวางด้านหน้า';
-  const items = [...new Set(result.obstacles.map((item) => `${aiClassLabels[item.className] || item.className} ${item.position === 'ตรงหน้า' ? 'ตรงหน้า' : `ด้าน${item.position || 'ตรงหน้า'}`}`))];
-  return `ระวัง ${items.join(' และ ')}`;
+  if (!result.obstacles.length) return t('ai.noObstaclesDetectedAhead');
+  const items = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} ${detectionPosition(item.position)} ${detectionDistance(item.distanceBand)}`))];
+  return t('ai.watchOut', { value0: items.join(t('ai.and')) });
 }
 
 type NavigationCue = {
@@ -238,8 +241,8 @@ function routeAnnouncementBucket(distance: number) {
 }
 
 function formatGuidanceDistance(distance: number) {
-  if (distance < 1_000) return `${Math.max(0, Math.round(distance / 5) * 5)} เมตร`;
-  return `${(distance / 1_000).toFixed(1)} กิโลเมตร`;
+  if (distance < 1_000) return t('ai.meters', { value0: Math.max(0, Math.round(distance / 5) * 5) });
+  return t('ai.kilometers', { value0: (distance / 1_000).toFixed(1) });
 }
 
 const styles = StyleSheet.create({

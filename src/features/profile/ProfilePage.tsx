@@ -1,5 +1,6 @@
+import { t, useLanguage, useMessageState, message } from '../../i18n';
 import { useEffect, useState, type ReactNode } from 'react';
-import { AccessibilityInfo, Alert, Linking, Modal, Pressable, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { AccessibilityInfo, Linking, Modal, Pressable, StyleSheet, Switch, TextInput, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
@@ -10,23 +11,41 @@ import { useAppData, type SavedPlace } from '../../providers/app-data';
 import { colors } from '../../theme';
 
 const PROFILE_NAME_KEY = '@stepable/profile-name';
-const fontSizes: { label: string; value: 0.9 | 1 | 1.15 | 1.3 }[] = [
-  { label: 'เล็ก', value: 0.9 },
-  { label: 'ปกติ', value: 1 },
-  { label: 'ใหญ่', value: 1.15 },
-  { label: 'ใหญ่มาก', value: 1.3 },
-];
 
 export default function ProfilePage() {
+  const fontSizes: { label: string; value: 0.9 | 1 | 1.15 | 1.3 }[] = [
+    { label: t('profile.small'), value: 0.9 },
+    { label: t('profile.default'), value: 1 },
+    { label: t('profile.large'), value: 1.15 },
+    { label: t('profile.extraLarge'), value: 1.3 },
+  ];
+  const { language, setLanguage } = useLanguage();
   const {
     preferences, updatePreferences, location, savedPlaces,
   } = useAppData();
-  const [name, setName] = useState('ผู้ใช้ StepAble');
+  const [name, setName] = useState('');
   const [nameDraft, setNameDraft] = useState('');
   const [editName, setEditName] = useState(false);
   const [fontDialog, setFontDialog] = useState(false);
   const [helpDialog, setHelpDialog] = useState(false);
-  const [notice, setNotice] = useState('');
+  const [languageDialog, setLanguageDialog] = useState(false);
+  const [savingLanguage, setSavingLanguage] = useState(false);
+  const [notice, setNotice] = useMessageState('');
+
+  const chooseLanguage = async (next: 'th' | 'en') => {
+    if (savingLanguage) return;
+    setSavingLanguage(true);
+    try {
+      await setLanguage(next);
+      setLanguageDialog(false);
+      setNotice(message('language.saved'));
+      AccessibilityInfo.announceForAccessibility(t('language.saved'));
+    } catch {
+      setNotice(message('language.saveFailed'));
+    } finally {
+      setSavingLanguage(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -41,7 +60,7 @@ export default function ProfilePage() {
     if (!nextName) return;
     setName(nextName);
     setEditName(false);
-    setNotice('บันทึกชื่อไว้ในอุปกรณ์นี้แล้ว');
+    setNotice(message('profile.nameSavedOnThisDevice'));
     await AsyncStorage.setItem(PROFILE_NAME_KEY, nextName);
   };
 
@@ -59,67 +78,79 @@ export default function ProfilePage() {
 
   return (
     <Screen contentStyle={styles.content}>
-      <Text style={styles.pageTitle}>โปรไฟล์</Text>
+      <Text style={styles.pageTitle}>{t('common.profile')}</Text>
       <View style={styles.account}>
         <View style={styles.avatar}><Icon name="user" size={35} color={colors.forest} /></View>
-        <View style={styles.accountCopy}><Text numberOfLines={1} style={styles.name}>{name}</Text><Text style={styles.role}>StepAble User · บันทึกเฉพาะอุปกรณ์นี้</Text></View>
-        <Pressable onPress={() => { setNameDraft(name); setEditName(true); }} style={styles.edit} accessibilityRole="button" accessibilityLabel="แก้ไขชื่อโปรไฟล์"><Icon name="edit" size={22} color={colors.forest} /></Pressable>
+        <View style={styles.accountCopy}><Text numberOfLines={1} style={styles.name}>{name || t('profile.stepableUser')}</Text><Text style={styles.role}>{t('profile.stepableUserSavedOnlyOnThisDevice')}</Text></View>
+        <Pressable onPress={() => { setNameDraft(name); setEditName(true); }} style={styles.edit} accessibilityRole="button" accessibilityLabel={t('profile.editProfileName')}><Icon name="edit" size={22} color={colors.forest} /></Pressable>
       </View>
 
-      <Section title="Walking Preferences" icon="walk">
-        <ToggleRow icon="shield" title="เส้นทางเดินแนะนำ" subtitle="ปิดเพื่อเน้นระยะสั้น · OSM ไม่มีคะแนนความปลอดภัยที่รับรองได้" value={preferences.safeFirst} onChange={(value) => updatePreferences({ safeFirst: value })} />
-        <ToggleRow icon="route" title="หลีกเลี่ยงบันได" subtitle="เพิ่มค่าปรับให้ทางที่มีบันไดเมื่อตั้งเส้นทาง" value={preferences.avoidSteps} onChange={(value) => updatePreferences({ avoidSteps: value })} />
-        <ToggleRow icon="wheelchair" title="รองรับวีลแชร์" subtitle="ปรับ route preference; ความชัน/ทางลาดใน OSM อาจไม่ครบ" value={preferences.wheelchair} onChange={(value) => updatePreferences({ wheelchair: value })} />
-        <ToggleRow icon="sun" title="เตือนเมื่อใกล้รายงานปัญหา" subtitle="เตือนภายใน 100 เมตรจากรายงานในอุปกรณ์นี้" value={preferences.avoidDark} onChange={(value) => updatePreferences({ avoidDark: value })} last />
+      <Section title={t('profile.walkingPreferences')} icon="walk">
+        <ToggleRow icon="shield" title={t('profile.recommendedWalkingRoute')} subtitle={t('profile.turnOffToPrioritizeShorterRoutesOsm')} value={preferences.safeFirst} onChange={(value) => updatePreferences({ safeFirst: value })} />
+        <ToggleRow icon="route" title={t('profile.avoidStairs')} subtitle={t('profile.increaseTheRoutingPenaltyForStairs')} value={preferences.avoidSteps} onChange={(value) => updatePreferences({ avoidSteps: value })} />
+        <ToggleRow icon="wheelchair" title={t('profile.wheelchairAccess')} subtitle={t('profile.adjustRoutingPreferencesOsmSlopeRampData')} value={preferences.wheelchair} onChange={(value) => updatePreferences({ wheelchair: value })} />
+        <ToggleRow icon="sun" title={t('profile.nearbyIssueAlerts')} subtitle={t('profile.alertWithin100MetersOfReportsSaved')} value={preferences.avoidDark} onChange={(value) => updatePreferences({ avoidDark: value })} last />
       </Section>
 
-      <Section title="Accessibility" icon="sliders">
-        <LinkRow icon="info" title="ขนาดตัวอักษร" value={fontSizes.find((item) => item.value === preferences.fontScale)?.label ?? 'ปกติ'} onPress={() => setFontDialog(true)} />
-        <ToggleLinkRow icon="volume" title="เสียงนำทาง" value={preferences.voiceNavigation} onChange={(value) => updatePreferences({ voiceNavigation: value })} />
-        <ToggleLinkRow icon="vibration" title="การสั่นแจ้งเตือน" value={preferences.vibration} onChange={updateVibration} last />
+      <Section title={t('profile.accessibility')} icon="sliders">
+        <LinkRow icon="info" title={t('profile.textSize')} value={fontSizes.find((item) => item.value === preferences.fontScale)?.label ?? t('profile.default')} onPress={() => setFontDialog(true)} />
+        <ToggleLinkRow icon="volume" title={t('profile.voiceNavigation')} value={preferences.voiceNavigation} onChange={(value) => updatePreferences({ voiceNavigation: value })} />
+        <ToggleLinkRow icon="vibration" title={t('profile.vibrationAlerts')} value={preferences.vibration} onChange={updateVibration} last />
       </Section>
 
-      <Section title="สถานที่โปรด · บันทึกในเครื่องนี้" icon="pin">
+      <Section title={t('profile.favoritesSavedOnThisDevice')} icon="pin">
         {savedPlaces.length ? <View style={styles.savedRow}>{savedPlaces.map((place) => <SavedPlaceCard key={place.id} place={place} onPress={() => openSavedPlace(place)} />)}</View> : (
           <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.addPlace} accessibilityRole="button">
-            <Icon name="plus" size={19} color={colors.forest} /><View style={styles.addPlaceCopy}><Text style={styles.savedLabel}>เพิ่มบ้าน/สถานที่โปรด</Text><Text style={styles.savedSub}>ค้นหาแล้วแตะดาวเพื่อบันทึกพิกัดจริง</Text></View><Icon name="chevron-right" size={18} color="#64748B" />
+            <Icon name="plus" size={19} color={colors.forest} /><View style={styles.addPlaceCopy}><Text style={styles.savedLabel}>{t('profile.addHomeFavoritePlace')}</Text><Text style={styles.savedSub}>{t('profile.searchAndTapTheStarToSave')}</Text></View><Icon name="chevron-right" size={18} color="#64748B" />
           </Pressable>
         )}
-        {savedPlaces.length ? <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.addAnother} accessibilityRole="button"><Icon name="plus" size={15} color={colors.forest} /><Text style={styles.addAnotherText}>ค้นหาและเพิ่มสถานที่</Text></Pressable> : null}
+        {savedPlaces.length ? <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.addAnother} accessibilityRole="button"><Icon name="plus" size={15} color={colors.forest} /><Text style={styles.addAnotherText}>{t('profile.searchAndAddAPlace')}</Text></Pressable> : null}
       </Section>
 
       <View style={styles.links}>
-        <LinkRow icon="globe" title="ภาษา" value="ไทย" onPress={() => Alert.alert('ภาษา', 'แอปเวอร์ชันนี้รองรับภาษาไทย')} />
-        <LinkRow icon="info" title="ช่วยเหลือ" value="" onPress={() => setHelpDialog(true)} last />
+        <LinkRow icon="globe" title={t('profile.language')} value={t(language === 'en' ? 'language.english' : 'profile.thai')} onPress={() => setLanguageDialog(true)} />
+        <LinkRow icon="info" title={t('profile.help')} value="" onPress={() => setHelpDialog(true)} last />
       </View>
       {notice ? <Text style={styles.notice} accessibilityLiveRegion="polite">{notice}</Text> : null}
-      {location ? <Text style={styles.locationNote}>ตำแหน่ง GPS พร้อมใช้งานในแอป</Text> : null}
+      {location ? <Text style={styles.locationNote}>{t('profile.gpsLocationIsAvailableInTheApp')}</Text> : null}
+
+      <Modal transparent visible={languageDialog} animationType="fade" onRequestClose={() => { if (!savingLanguage) setLanguageDialog(false); }}>
+        <View style={styles.modalBackdrop}><View style={styles.modalCard} accessibilityViewIsModal>
+          <Text style={styles.modalTitle}>{t('profile.language')}</Text>
+          {notice ? <Text style={styles.notice} accessibilityLiveRegion="polite">{notice}</Text> : null}
+          {(['th', 'en'] as const).map((option) => <Pressable key={option} testID={`language-${option}`} disabled={savingLanguage} onPress={() => { void chooseLanguage(option); }} style={[styles.fontChoice, language === option && styles.fontChoiceActive]} accessibilityRole="radio" accessibilityState={{ checked: language === option, disabled: savingLanguage }}>
+            <Text style={styles.fontChoiceLabel}>{t(option === 'en' ? 'language.english' : 'profile.thai')}</Text>
+            {language === option ? <Icon name="check" size={18} color={colors.forest} /> : null}
+          </Pressable>)}
+          <Pressable disabled={savingLanguage} onPress={() => setLanguageDialog(false)} style={styles.modalSecondary} accessibilityRole="button"><Text style={styles.modalSecondaryText}>{t('profile.cancel')}</Text></Pressable>
+        </View></View>
+      </Modal>
 
       <Modal transparent visible={editName} animationType="fade" onRequestClose={() => setEditName(false)}>
         <View style={styles.modalBackdrop}><View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>แก้ไขชื่อโปรไฟล์</Text>
-          <TextInput value={nameDraft} onChangeText={setNameDraft} maxLength={40} placeholder="ชื่อที่ต้องการแสดง" style={styles.nameInput} accessibilityLabel="ชื่อโปรไฟล์" />
-          <View style={styles.modalActions}><Pressable onPress={() => setEditName(false)} style={styles.modalSecondary} accessibilityRole="button"><Text style={styles.modalSecondaryText}>ยกเลิก</Text></Pressable><Pressable onPress={() => { void saveName(); }} style={styles.modalPrimary} accessibilityRole="button"><Text style={styles.modalPrimaryText}>บันทึก</Text></Pressable></View>
+          <Text style={styles.modalTitle}>{t('profile.editProfileName')}</Text>
+          <TextInput value={nameDraft} onChangeText={setNameDraft} maxLength={40} placeholder={t('profile.displayName')} style={styles.nameInput} accessibilityLabel={t('profile.profileName')} />
+          <View style={styles.modalActions}><Pressable onPress={() => setEditName(false)} style={styles.modalSecondary} accessibilityRole="button"><Text style={styles.modalSecondaryText}>{t('profile.cancel')}</Text></Pressable><Pressable onPress={() => { void saveName(); }} style={styles.modalPrimary} accessibilityRole="button"><Text style={styles.modalPrimaryText}>{t('profile.save')}</Text></Pressable></View>
         </View></View>
       </Modal>
 
       <Modal transparent visible={fontDialog} animationType="fade" onRequestClose={() => setFontDialog(false)}>
         <View style={styles.modalBackdrop}><View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>ขนาดตัวอักษร</Text>
-          <Text style={styles.modalSub}>ปรับข้อความในแอปได้ทันที</Text>
+          <Text style={styles.modalTitle}>{t('profile.textSize')}</Text>
+          <Text style={styles.modalSub}>{t('profile.adjustAppTextImmediately')}</Text>
           {fontSizes.map((size) => <Pressable key={size.value} onPress={() => {
             updatePreferences({ fontScale: size.value });
             setFontDialog(false);
-            AccessibilityInfo.announceForAccessibility(`ขนาดตัวอักษร ${size.label}`);
-          }} style={[styles.fontChoice, preferences.fontScale === size.value && styles.fontChoiceActive]} accessibilityRole="button" accessibilityState={{ selected: preferences.fontScale === size.value }}><Text style={[styles.fontChoiceLabel, { fontSize: 13 * size.value }]}>{size.label}</Text><Text style={styles.fontChoiceSample}>Aa กขค</Text>{preferences.fontScale === size.value ? <Icon name="check" size={18} color={colors.forest} /> : null}</Pressable>)}
+            AccessibilityInfo.announceForAccessibility(t('profile.textSize2', { value0: size.label }));
+          }} style={[styles.fontChoice, preferences.fontScale === size.value && styles.fontChoiceActive]} accessibilityRole="button" accessibilityState={{ selected: preferences.fontScale === size.value }}><Text style={[styles.fontChoiceLabel, { fontSize: 13 * size.value }]}>{size.label}</Text><Text style={styles.fontChoiceSample}>{t('profile.aaAbc')}</Text>{preferences.fontScale === size.value ? <Icon name="check" size={18} color={colors.forest} /> : null}</Pressable>)}
         </View></View>
       </Modal>
 
       <Modal transparent visible={helpDialog} animationType="fade" onRequestClose={() => setHelpDialog(false)}>
         <View style={styles.modalBackdrop}><View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>ช่วยเหลือ StepAble</Text>
-          <Text style={styles.helpText}>• พิกัด GPS ส่งไปยังบริการสาธารณะเพื่อค้นหา/ระบุสถานที่ (Photon), คำนวณเส้นทาง (Valhalla), แผนที่ (OpenStreetMap) และอากาศ (Open-Meteo){ '\n' }• บริการสาธารณะอาจขัดข้องหรือจำกัดคำขอได้{ '\n' }• รายงานและสถานที่โปรดเก็บในเครื่องนี้ ยังไม่ส่งให้ผู้อื่นเพราะยังไม่มี backend{ '\n' }• ตรวจสอบเส้นทางจริงก่อนเดิน เนื่องจากข้อมูลทางลาด/บันไดอาจไม่ครบ</Text>
-          <View style={styles.modalActions}><Pressable onPress={() => { setHelpDialog(false); void Linking.openURL('https://www.openstreetmap.org/fixthemap'); }} style={styles.modalSecondary} accessibilityRole="link"><Text style={styles.modalSecondaryText}>แจ้งแก้แผนที่</Text></Pressable><Pressable onPress={() => setHelpDialog(false)} style={styles.modalPrimary} accessibilityRole="button"><Text style={styles.modalPrimaryText}>ปิด</Text></Pressable></View>
+          <Text style={styles.modalTitle}>{t('profile.stepableHelp')}</Text>
+          <Text style={styles.helpText}>{t('profile.gpsCoordinatesAreSentToPublicServices')}{ '\n' }{t('profile.publicServicesMayBeUnavailableOrLimit')}{ '\n' }{t('profile.reportsAndFavoritesStayOnThisDevice')}{ '\n' }{t('profile.checkActualConditionsBeforeWalkingRampStair')}</Text>
+          <View style={styles.modalActions}><Pressable onPress={() => { setHelpDialog(false); void Linking.openURL('https://www.openstreetmap.org/fixthemap'); }} style={styles.modalSecondary} accessibilityRole="link"><Text style={styles.modalSecondaryText}>{t('profile.reportAMapError')}</Text></Pressable><Pressable onPress={() => setHelpDialog(false)} style={styles.modalPrimary} accessibilityRole="button"><Text style={styles.modalPrimaryText}>{t('profile.close')}</Text></Pressable></View>
         </View></View>
       </Modal>
     </Screen>
@@ -127,24 +158,29 @@ export default function ProfilePage() {
 }
 
 function Section({ title, icon, children }: { title: string; icon: IconName; children: ReactNode }) {
+  useLanguage();
   return <View style={styles.section}><View style={styles.sectionHead}><View style={styles.sectionIcon}><Icon name={icon} size={19} color={colors.forest} /></View><Text style={styles.sectionTitle}>{title}</Text></View><View style={styles.sectionBody}>{children}</View></View>;
 }
 
 function ToggleRow({ icon, title, subtitle, value, onChange, last = false }: { icon: IconName; title: string; subtitle: string; value: boolean; onChange: (value: boolean) => void; last?: boolean }) {
+  useLanguage();
   return <View style={[styles.row, !last && styles.rowBorder]}><Icon name={icon} size={21} color={colors.forest} /><View style={styles.rowCopy}><Text style={styles.rowTitle}>{title}</Text><Text style={styles.rowSub}>{subtitle}</Text></View><Switch value={value} onValueChange={onChange} trackColor={{ false: '#CBD5E1', true: '#60A5FA' }} thumbColor="#FFFFFF" accessibilityLabel={title} />
   </View>;
 }
 
 function ToggleLinkRow({ icon, title, value, onChange, last = false }: { icon: IconName; title: string; value: boolean; onChange: (value: boolean) => void; last?: boolean }) {
-  return <View style={[styles.row, !last && styles.rowBorder]}><Icon name={icon} size={21} color={colors.forest} /><Text style={[styles.rowTitle, styles.linkTitle]}>{title}</Text><Text style={styles.linkValue}>{value ? 'เปิด' : 'ปิด'}</Text><Switch value={value} onValueChange={onChange} trackColor={{ false: '#CBD5E1', true: '#60A5FA' }} thumbColor="#FFFFFF" accessibilityLabel={title} /></View>;
+  useLanguage();
+  return <View style={[styles.row, !last && styles.rowBorder]}><Icon name={icon} size={21} color={colors.forest} /><Text style={[styles.rowTitle, styles.linkTitle]}>{title}</Text><Text style={styles.linkValue}>{value ? t('profile.on') : t('profile.off')}</Text><Switch value={value} onValueChange={onChange} trackColor={{ false: '#CBD5E1', true: '#60A5FA' }} thumbColor="#FFFFFF" accessibilityLabel={title} /></View>;
 }
 
 function LinkRow({ icon, title, value, onPress, last = false }: { icon: IconName; title: string; value: string; onPress: () => void; last?: boolean }) {
+  useLanguage();
   return <Pressable onPress={onPress} style={[styles.row, !last && styles.rowBorder]} accessibilityRole="button"><Icon name={icon} size={21} color={colors.forest} /><Text style={[styles.rowTitle, styles.linkTitle]}>{title}</Text>{value ? <Text style={styles.linkValue}>{value}</Text> : null}<Icon name="chevron-right" size={17} color="#64748B" /></Pressable>;
 }
 
 function SavedPlaceCard({ place, onPress }: { place: SavedPlace; onPress: () => void }) {
-  return <Pressable onPress={onPress} style={styles.saved} accessibilityRole="button" accessibilityLabel={`คำนวณเส้นทางไป ${place.label}`}><Icon name="pin" size={23} color={colors.forest} /><Text numberOfLines={1} style={styles.savedLabel}>{place.label}</Text><Text style={styles.savedSub}>ดูเส้นทาง</Text></Pressable>;
+  useLanguage();
+  return <Pressable onPress={onPress} style={styles.saved} accessibilityRole="button" accessibilityLabel={t('profile.getDirectionsTo', { value0: place.label })}><Icon name="pin" size={23} color={colors.forest} /><Text numberOfLines={1} style={styles.savedLabel}>{place.label}</Text><Text style={styles.savedSub}>{t('profile.directions')}</Text></Pressable>;
 }
 
 const styles = StyleSheet.create({

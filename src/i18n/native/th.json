@@ -1,0 +1,8 @@
+{
+  "ios": {
+    "NSCameraUsageDescription": "StepAble ใช้กล้องเพื่อวิเคราะห์ทางเดินและแนบรูปในรายงานปัญหา",
+    "NSLocationWhenInUseUsageDescription": "StepAble ใช้ตำแหน่งขณะเปิดแอปเพื่อแสดงแผนที่ สภาพอากาศ และเส้นทางเดิน",
+    "NSPhotoLibraryUsageDescription": "StepAble เข้าถึงรูปภาพเมื่อคุณเลือกแนบรูปในรายงานปัญหา",
+    "NSPhotoLibraryAddUsageDescription": "StepAble บันทึกรูปภาพเมื่อคุณร้องขอเท่านั้น"
+  }
+}
