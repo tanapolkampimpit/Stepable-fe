@@ -24,6 +24,7 @@
       "bundler": "metro"
     },
     "plugins": [
+      "expo-dev-client",
       "expo-router",
       [
         "expo-location",
@@ -44,7 +45,9 @@
           "photosPermission": "StepAble เข้าถึงรูปภาพเมื่อคุณเลือกแนบรูปในรายงานปัญหา"
         }
       ],
-      "expo-font"
+      "expo-font",
+      "onnxruntime-react-native",
+      "expo-asset"
     ]
   }
 }
