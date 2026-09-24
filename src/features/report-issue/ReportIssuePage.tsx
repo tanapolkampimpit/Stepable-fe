@@ -1,20 +1,23 @@
 import { issueTypes, severities, issueLabel, severityLabel } from '../../i18n/reports';
 import { t, useLanguage, useMessageState, message } from '../../i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { AppText as Text } from '../../components/ui/AppText';
 import { Icon } from '../../components/ui/Icon';
+import { issueAppearance } from '../../components/reports/reportAppearance';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { Screen } from '../../components/layout/Screen';
 import { useAppData } from '../../providers/app-data';
 import { distanceMeters, reverseGeocodeOsm, type Coordinates } from '../../services/geo';
-import { submitReport as apiSubmitReport, uploadReportPhoto, thaiToCategory, thaiToSeverity } from '../../services/api';
+import { submitReport as apiSubmitReport, uploadReportPhoto, resolveReportPhotoUrl, thaiToCategory, thaiToSeverity } from '../../services/api';
 import { colors } from '../../theme';
 
 export default function ReportIssuePage() {
   useLanguage();
+  const { width } = useWindowDimensions();
+  const compactIssueCards = width < 600;
   const { lat, lon, image } = useLocalSearchParams<{ lat?: string; lon?: string; image?: string }>();
   const { location, placeLabel, locationMessage, isLocating, refreshLocation, addReport, refreshReports } = useAppData();
   const [issue, setIssue] = useState<(typeof issueTypes)[number]>(issueTypes[0]);
@@ -111,11 +114,13 @@ export default function ReportIssuePage() {
       }
 
       await addReport({
+        ...(serverReportId ? { id: serverReportId } : {}),
         type: issue,
         severity,
         description: description.trim(),
         coordinates,
-        ...(uploadedPhotoUrl || imageUri ? { imageUri: (uploadedPhotoUrl || imageUri) as string } : {}),
+        ...(uploadedPhotoUrl || imageUri ? { imageUri: (resolveReportPhotoUrl(uploadedPhotoUrl) || imageUri) as string } : {}),
+        ...(uploadedPhotoUrl && imageUri ? { localImageUri: imageUri } : {}),
         status: serverReportId ? 'submitted' : undefined,
       });
 
@@ -153,13 +158,34 @@ export default function ReportIssuePage() {
         </Pressable>
       </View>
       {!coordinates ? <Text style={styles.gpsHint}>{locationMessage}</Text> : null}
-      <Text style={styles.label}>{t('reportissue.issueType')}</Text>
-      <View style={styles.options}>
-        {issueTypes.map((item) => (
-          <Pressable key={item} onPress={() => setIssue(item)} accessibilityRole="button" accessibilityState={{ selected: issue === item }} style={[styles.option, issue === item && styles.optionActive]}>
-            <Text style={[styles.optionText, issue === item && styles.optionTextActive]}>{issueLabel(item)}</Text>
-          </Pressable>
-        ))}
+      <View style={styles.issuePanel}>
+        <Text style={styles.issueHeading}>{t('reportissue.issueType')}</Text>
+        <View style={styles.options}>
+          {issueTypes.map((item) => {
+            const appearance = issueAppearance[item];
+            const selected = issue === item;
+            return (
+              <Pressable
+                key={item}
+                onPress={() => setIssue(item)}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                accessibilityLabel={issueLabel(item)}
+                style={({ pressed }) => [
+                  styles.option,
+                  { width: compactIssueCards ? '48%' : '31.8%', backgroundColor: appearance.background, borderColor: appearance.border },
+                  compactIssueCards && styles.optionCompact,
+                  selected && styles.optionActive,
+                  pressed && styles.optionPressed,
+                ]}
+              >
+                <Icon name={appearance.icon} size={compactIssueCards ? 29 : 38} color={appearance.color} strokeWidth={1.9} />
+                <Text style={[styles.optionText, { color: appearance.color }, compactIssueCards && styles.optionTextCompact]}>{issueLabel(item)}</Text>
+                {selected ? <View style={[styles.selectedCheck, { backgroundColor: appearance.color }]}><Icon name="check" size={12} color="#FFFFFF" strokeWidth={2.7} /></View> : null}
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
       <Text style={styles.label}>{t('reportissue.severity')}</Text>
       <View style={styles.severityRow}>
@@ -201,8 +227,17 @@ const styles = StyleSheet.create({
   locationIcon: { width: 37, height: 37, borderRadius: 12, backgroundColor: colors.mint, alignItems: 'center', justifyContent: 'center' },
   locationCopy: { flex: 1, gap: 3, minWidth: 0 }, locationTitle: { color: colors.ink, fontSize: 12, fontWeight: '700' }, locationSub: { color: colors.muted, fontSize: 9 },
   refreshButton: { minWidth: 55, minHeight: 35, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: colors.mint }, edit: { color: colors.forest, fontSize: 10, fontWeight: '800' }, gpsHint: { color: colors.muted, fontSize: 10, lineHeight: 15 },
-  label: { color: colors.ink, fontSize: 12, fontWeight: '800', marginBottom: -8 }, options: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  option: { minHeight: 36, justifyContent: 'center', paddingHorizontal: 11, borderRadius: 10, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper }, optionActive: { backgroundColor: colors.mint, borderColor: '#93C5FD' }, optionText: { color: colors.muted, fontSize: 11, fontWeight: '600' }, optionTextActive: { color: colors.forest },
+  label: { color: colors.ink, fontSize: 12, fontWeight: '800', marginBottom: -8 },
+  issuePanel: { padding: 12, gap: 12, borderRadius: 20, backgroundColor: colors.paper, borderWidth: 1, borderColor: '#ECF0F6', shadowColor: '#173153', shadowOpacity: 0.04, shadowRadius: 12, elevation: 1 },
+  issueHeading: { color: colors.ink, fontSize: 14, fontWeight: '800' },
+  options: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 10 },
+  option: { minHeight: 86, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 10, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 18, borderWidth: 1.5, position: 'relative' },
+  optionCompact: { minHeight: 82, flexDirection: 'column', justifyContent: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 8, borderRadius: 15 },
+  optionActive: { borderWidth: 2, shadowColor: '#1D4ED8', shadowOpacity: 0.14, shadowRadius: 8, elevation: 2 },
+  optionPressed: { opacity: 0.76 },
+  optionText: { flexShrink: 1, fontSize: 14, lineHeight: 19, fontWeight: '800' },
+  optionTextCompact: { textAlign: 'center', fontSize: 11, lineHeight: 14 },
+  selectedCheck: { position: 'absolute', top: 5, right: 5, width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   severityRow: { flexDirection: 'row', gap: 8 }, severity: { flex: 1, minHeight: 39, alignItems: 'center', justifyContent: 'center', borderRadius: 10, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper }, severityActive: { backgroundColor: colors.amberSoft, borderColor: '#E8C997' }, severityText: { color: colors.muted, fontSize: 11, fontWeight: '600' }, severityTextActive: { color: colors.amber },
   optional: { color: colors.muted, fontWeight: '400', fontSize: 10 }, description: { minHeight: 100, padding: 12, borderRadius: 13, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, color: colors.ink, fontFamily: 'NotoSansThai_400Regular', fontSize: 12 },
   photoPreviewWrap: { height: 155, borderRadius: 14, overflow: 'hidden', position: 'relative' }, photoPreview: { width: '100%', height: '100%' }, removePhoto: { position: 'absolute', top: 8, right: 8, width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(15,23,42,0.72)', alignItems: 'center', justifyContent: 'center' },

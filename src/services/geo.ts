@@ -2,6 +2,7 @@ import { t, getLanguage } from '../i18n/core';
 import { planRoute, fetchPlaces, type BackendRouteAlternative } from './api';
 
 export type Coordinates = { latitude: number; longitude: number };
+export type MapBounds = { west: number; south: number; east: number; north: number };
 
 export type MapPlace = {
   id: string;

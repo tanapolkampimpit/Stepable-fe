@@ -355,7 +355,7 @@ export default function SearchPage() {
         </View>
         <View style={styles.routeDivider} />
         <View style={styles.routeRow}>
-          <View style={[styles.locationIcon, styles.pinSoft]}><Icon name="pin" size={20} color="#EF4444" /></View>
+          <View style={[styles.locationIcon, styles.pinSoft]}><Icon name="pin-filled" size={20} color="#DC2626" /></View>
           <View style={styles.routeCopy}>
             <Text style={styles.label}>{t('navigation.destination')}</Text>
             <Text numberOfLines={1} style={styles.routeValue}>{query.trim() || t('search.searchOpenstreetmap')}</Text>
