@@ -166,10 +166,6 @@ export default function RoutesPage() {
       {error ? <Pressable onPress={retryCalculation} style={styles.error} accessibilityRole="button"><Text style={styles.errorText}>{error}{t('navigation.tapToRetry')}</Text></Pressable> : null}
       {!location ? <Text style={styles.hint}>{locationStatus === 'denied' ? locationMessage : t('routes.yourGpsLocationIsRequiredAsThe')}</Text> : null}
       {!destinationPoint ? <Text style={styles.errorText}>{t('routes.thisDestinationHasNoOpenstreetmapCoordinatesGo')}</Text> : null}
-      {loading ? <View style={styles.status}><ActivityIndicator color={colors.forest} /><Text style={styles.statusText}>กำลังคำนวณเส้นทางจาก StepAble API…</Text></View> : null}
-      {error ? <Pressable onPress={retryCalculation} style={styles.error} accessibilityRole="button"><Text style={styles.errorText}>{error} · แตะเพื่อลองอีกครั้ง</Text></Pressable> : null}
-      {!location ? <Text style={styles.hint}>{locationStatus === 'denied' ? locationMessage : 'ต้องใช้ตำแหน่ง GPS จริงเป็นจุดเริ่มต้น'}</Text> : null}
-      {!destinationPoint ? <Text style={styles.errorText}>ปลายทางนี้ไม่มีพิกัด กรุณากลับไปเลือกสถานที่ใหม่</Text> : null}
 
       <View style={styles.routeOptions}>
         {routeModes.map((item) => <RouteOptionCard key={item.id} item={item} selected={mode === item.id} route={route} onPress={() => setMode(item.id)} />)}
@@ -183,30 +179,6 @@ export default function RoutesPage() {
 }
 
 function RouteOptionCard({ item, selected, route, onPress }: { item: { id: RouteMode; title: string; detail: string }; selected: boolean; route: WalkingRoute | null; onPress: () => void }) {
-  useLanguage();
-  const distance = selected && route ? route.distanceKm : null;
-  const duration = selected && route ? route.durationSeconds : null;
-  const risk = selected && route?.riskAvailable ? route.riskScore : null;
-  const accent = item.id === 'shortest' ? '#F97316' : item.id === 'accessible' ? '#16A166' : '#2563EB';
-  return <Pressable onPress={onPress} style={[styles.routeOption, selected && styles.routeOptionSelected]} accessibilityRole="button" accessibilityState={{ selected }}>
-    <View style={styles.optionHeader}>
-      <View style={[styles.optionPath, { backgroundColor: accent }]}><Icon name={item.id === 'accessible' ? 'wheelchair' : 'route'} size={20} color="#FFFFFF" /></View>
-      <View style={styles.optionTitleCopy}>
-        {item.id === 'recommended' ? <Text style={styles.optionBadge}>{t('routes.recommended')}</Text> : null}
-        <Text style={styles.optionTitle}>{item.title}</Text>
-      </View>
-      <View style={[styles.radio, selected && { borderColor: accent }]}>{selected ? <View style={[styles.radioInner, { backgroundColor: accent }]} /> : null}</View>
-    </View>
-    <Text style={styles.optionDetail}>{item.detail}</Text>
-    {!selected ? <Text style={styles.optionDetail}>{t('routes.selectToCalculate')}</Text> : null}
-    <View style={styles.optionStats}>
-      <RouteStat icon="route" value={distance === null ? '—' : formatDistance(distance)} />
-      <RouteStat icon="clock" value={duration === null ? '—' : formatDuration(duration)} />
-      <RouteStat icon="shield" value={risk === null ? t('routes.riskUnavailable') : t('routes.riskScore', { score: Math.round(risk) })} />
-    </View>
-
-  </Pressable>;
-function RouteOptionCard({ item, selected, route, onPress }: { item: (typeof routeModes)[number]; selected: boolean; route: WalkingRoute | null; onPress: () => void }) {
   const alt = route?.alternatives?.find((a) => (
     item.id === 'accessible' ? a.type === 'accessible' :
     item.id === 'shortest' ? a.type === 'fastest' :

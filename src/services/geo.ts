@@ -1,5 +1,4 @@
-import { t, message, LocalizedError, getLanguage } from '../i18n/core';
-import { getAiApiUrl } from './ai';
+import { t, getLanguage } from '../i18n/core';
 import { planRoute, fetchPlaces, type BackendRouteAlternative } from './api';
 
 export type Coordinates = { latitude: number; longitude: number };
@@ -10,6 +9,7 @@ export type MapPlace = {
   description: string;
   category: string;
   coordinates: Coordinates;
+  distanceMeters?: number;
 };
 
 export type WalkingPreferences = {
@@ -87,64 +87,44 @@ type PhotonFeature = {
 const PHOTON_API = 'https://photon.komoot.io';
 
 export async function searchOsmPlaces(query: string, near?: Coordinates): Promise<MapPlace[]> {
-  const params = new URLSearchParams({ q: query.trim(), limit: '12', lang: getLanguage() === 'en' ? 'en' : 'default' });
-  if (near) {
-    params.set('lat', String(near.latitude));
-    params.set('lon', String(near.longitude));
-  }
-
-  const response = await fetch(`${PHOTON_API}/api/?${params.toString()}`, {
-    headers: { Accept: 'application/geo+json, application/json' },
-  });
-  if (!response.ok) throw new LocalizedError(message('service.couldNotSearchForPlacesTryAgain'));
-
-  const data = (await response.json()) as { features?: PhotonFeature[] };
-  return (data.features ?? []).flatMap((feature) => {
-    const props = feature.properties;
-    const point = feature.geometry?.coordinates;
-    if (!props?.name || !point || point.length < 2) return [];
-    const [longitude, latitude] = point;
-    const placeLine = [props.street, props.housenumber, props.locality ?? props.district ?? props.city ?? props.county]
-      .filter(Boolean)
-      .join(' ');
-    const category = [props.osm_key, props.osm_value].filter(Boolean).join(' · ');
-
-    return [{
-      id: `${props.osm_type ?? 'place'}-${props.osm_id ?? `${latitude}-${longitude}`}`,
-      name: props.name,
-      description: [placeLine, props.state, props.country].filter(Boolean).join(', '),
-      category: category || props.type || t('service.openstreetmapPlace'),
-      coordinates: { latitude, longitude },
-    }];
-  });
   const cleanQuery = query.trim();
-  let backendPlaces: MapPlace[] = [];
+  if (!cleanQuery) return [];
 
+  // Default geographic anchor to Sriracha if user location is not ready
+  const refPoint: Coordinates = near || { latitude: 13.1678, longitude: 100.9312 };
+
+  let backendPlaces: MapPlace[] = [];
   try {
     const fetched = await fetchPlaces({
       query: cleanQuery,
-      latitude: near?.latitude,
-      longitude: near?.longitude,
-      limit: 10,
+      latitude: refPoint.latitude,
+      longitude: refPoint.longitude,
+      limit: 30,
     });
-    backendPlaces = fetched.map((p) => ({
-      id: `backend-${p.id}`,
-      name: p.title,
-      description: `${p.address} · ความปลอดภัย ${p.safeScore}%`,
-      category: p.category || 'สถานที่แนะนำในศรีราชา',
-      coordinates: { latitude: p.coordinates.latitude, longitude: p.coordinates.longitude },
-    }));
+    backendPlaces = fetched.map((p) => {
+      const dist = distanceMeters(refPoint, p.coordinates);
+      return {
+        id: `backend-${p.id}`,
+        name: p.title,
+        description: `${p.address} · ความปลอดภัย ${p.safeScore}%`,
+        category: p.category || 'สถานที่แนะนำในศรีราชา',
+        coordinates: { latitude: p.coordinates.latitude, longitude: p.coordinates.longitude },
+        distanceMeters: dist,
+      };
+    });
   } catch {
     // If backend place search fails, continue to Photon
   }
 
   let photonPlaces: MapPlace[] = [];
   try {
-    const params = new URLSearchParams({ q: cleanQuery, limit: '10', lang: 'default' });
-    if (near) {
-      params.set('lat', String(near.latitude));
-      params.set('lon', String(near.longitude));
-    }
+    const params = new URLSearchParams({
+      q: cleanQuery,
+      limit: '30',
+      lang: getLanguage() === 'en' ? 'en' : 'default',
+      lat: String(refPoint.latitude),
+      lon: String(refPoint.longitude),
+    });
     const response = await fetch(`${PHOTON_API}/api/?${params.toString()}`, {
       headers: { Accept: 'application/geo+json, application/json' },
     });
@@ -155,6 +135,8 @@ export async function searchOsmPlaces(query: string, near?: Coordinates): Promis
         const point = feature.geometry?.coordinates;
         if (!props?.name || !point || point.length < 2) return [];
         const [longitude, latitude] = point;
+        const coords = { latitude, longitude };
+        const dist = distanceMeters(refPoint, coords);
         const placeLine = [props.street, props.housenumber, props.locality ?? props.district ?? props.city ?? props.county]
           .filter(Boolean)
           .join(' ');
@@ -164,8 +146,9 @@ export async function searchOsmPlaces(query: string, near?: Coordinates): Promis
           id: `${props.osm_type ?? 'place'}-${props.osm_id ?? `${latitude}-${longitude}`}`,
           name: props.name,
           description: [placeLine, props.state, props.country].filter(Boolean).join(', '),
-          category: category || props.type || 'สถานที่จาก OpenStreetMap',
-          coordinates: { latitude, longitude },
+          category: category || props.type || t('service.openstreetmapPlace'),
+          coordinates: coords,
+          distanceMeters: dist,
         }];
       });
     }
@@ -180,6 +163,9 @@ export async function searchOsmPlaces(query: string, near?: Coordinates): Promis
       combined.push(p);
     }
   }
+
+  // Sort strictly by distance to user (closest first)
+  combined.sort((a, b) => (a.distanceMeters ?? 0) - (b.distanceMeters ?? 0));
 
   return combined;
 }
@@ -243,24 +229,6 @@ export async function getWalkingRoute(
   preferences: WalkingPreferences = {},
 ): Promise<WalkingRoute> {
   try {
-    response = await fetch(`${endpoint}/v1/routes/walking`, {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'Accept-Language': getLanguage() },
-      body: JSON.stringify({
-        origin,
-        destination,
-        preferences,
-        isNight: hour < 6 || hour >= 18,
-      }),
-    });
-  } catch {
-    if (/localhost|127\.0\.0\.1/.test(endpoint)) {
-      throw new LocalizedError(message('service.cannotConnectToUseYourComputerS', { value0: endpoint }));
-    }
-    throw new LocalizedError(message('service.cannotConnectToTheAiServerAt', { value0: endpoint }));
-  }
-  if (!response.ok) {
-    throw new LocalizedError(message('service.aiServerReturnedStatus', { value0: response.status }));
     const planResponse = await planRoute({
       origin,
       destination,

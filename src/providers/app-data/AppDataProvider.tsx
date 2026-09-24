@@ -1,10 +1,10 @@
-import { migrateReports } from '../../i18n/reports';
+import { migrateReports, type IssueType, type Severity } from '../../i18n/reports';
 import { t, useLanguage, useMessageState, message } from '../../i18n';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as Location from 'expo-location';
 import { distanceMeters, reverseGeocodeOsm, type Coordinates } from '../../services/geo';
-import { fetchCurrentWeather, fetchReports, categoryToThai, severityToThai } from '../../services/api';
+import { fetchCurrentWeather, fetchReports } from '../../services/api';
 import { AppDataContext } from './AppDataContext';
 import { DEFAULT_PREFERENCES, STORAGE_KEYS } from './constants';
 import type {
@@ -156,24 +156,6 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     lastWeatherFetch.current = { coordinates, timestamp: Date.now() };
     setWeatherMessage(message('location.updatingWeatherForYourLocation'));
-    const url = new URL('https://api.open-meteo.com/v1/forecast');
-    url.search = new URLSearchParams({
-      latitude: String(coordinates.latitude),
-      longitude: String(coordinates.longitude),
-      current: 'temperature_2m,weather_code,relative_humidity_2m',
-      timezone: 'auto',
-    }).toString();
-    void fetch(url.toString()).then(async (response) => {
-      if (!response.ok) throw new Error('Weather service unavailable');
-      const data = await response.json() as {
-        timezone?: string;
-        current?: { temperature_2m?: number; weather_code?: number; relative_humidity_2m?: number };
-      };
-      if (!data.current || typeof data.current.temperature_2m !== 'number' || !data.timezone) {
-        throw new Error('Invalid weather response');
-      }
-      if (!cancelled) {
-    setWeatherMessage('กำลังอัปเดตสภาพอากาศจาก StepAble API');
 
     // Try StepAble Backend API first
     void fetchCurrentWeather(coordinates.latitude, coordinates.longitude)
@@ -188,11 +170,6 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           advisory: data.advisory ?? undefined,
           isSafeForWalking: data.isSafeForWalking,
         });
-        setWeatherMessage(message('location.latestOpenMeteoWeatherForYourLocation'));
-      }
-    }).catch(() => {
-      if (!cancelled) setWeatherMessage(message('location.couldNotLoadWeatherCheckYourConnection'));
-    });
         setWeatherMessage(data.advisory || `สภาพอากาศ: ${data.weatherCondition}`);
       })
       .catch(() => {
@@ -221,11 +198,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 humidity: data.current.relative_humidity_2m,
                 timezone: data.timezone,
               });
-              setWeatherMessage('สภาพอากาศตามพิกัดปัจจุบัน');
+              setWeatherMessage(message('location.latestOpenMeteoWeatherForYourLocation'));
             }
           })
           .catch(() => {
-            if (!cancelled) setWeatherMessage('โหลดอากาศไม่ได้ แตะเพื่อลองใหม่');
+            if (!cancelled) setWeatherMessage(message('location.couldNotLoadWeatherCheckYourConnection'));
           });
       });
 
@@ -235,16 +212,27 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const refreshReports = useCallback(async () => {
     try {
       const serverReports = await fetchReports({ limit: 100 });
-      const mappedServerReports: LocalReport[] = serverReports.map((item) => ({
-        id: item.id,
-        type: categoryToThai(item.category),
-        severity: severityToThai(item.severity),
-        description: item.description || item.title || '',
-        coordinates: { latitude: item.latitude, longitude: item.longitude },
-        createdAt: item.createdAt,
-        imageUri: item.photoUrl || undefined,
-        status: item.status,
-      }));
+      const mappedServerReports: LocalReport[] = serverReports.map((item) => {
+        let issueType: IssueType = 'damaged_sidewalk';
+        if (item.category === 'obstacle') issueType = 'obstacle';
+        else if (item.category === 'lighting' || item.category === 'poor_lighting') issueType = 'poor_lighting';
+        else if (item.category === 'no_ramp' || item.category === 'missing_ramp') issueType = 'missing_ramp';
+        else if (item.category === 'drain_cover' || item.category === 'damaged_drain') issueType = 'damaged_drain';
+        else if (item.category === 'crosswalk' || item.category === 'unsafe_crossing') issueType = 'unsafe_crossing';
+
+        const sev: Severity = item.severity === 'high' || item.severity === 'สูง' ? 'high' : item.severity === 'low' || item.severity === 'ต่ำ' ? 'low' : 'medium';
+
+        return {
+          id: item.id,
+          type: issueType,
+          severity: sev,
+          description: item.description || item.title || '',
+          coordinates: { latitude: item.latitude, longitude: item.longitude },
+          createdAt: item.createdAt,
+          imageUri: item.photoUrl || undefined,
+          status: item.status,
+        };
+      });
 
       // Combine with local unsynced reports by ID deduplication
       const existing = reportsRef.current;
