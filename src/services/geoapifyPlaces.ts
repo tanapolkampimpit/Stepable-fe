@@ -32,6 +32,9 @@ const categories = [
   'healthcare.clinic_or_praxis,healthcare.pharmacy,education.college,education.school,accommodation.hostel,public_transport.subway,commercial.supermarket,entertainment.museum,service.police,service.vehicle.fuel,catering.restaurant,catering.cafe',
 ];
 
+const placeCache = new Map<string, { expiresAt: number; promise: Promise<GeoapifyPlace[]> }>();
+const CACHE_DURATION_MS = 2 * 60 * 1000;
+
 async function searchPlaces(categoryList: string, bounds: MapBounds, limit: number): Promise<GeoapifyPlace[]> {
   const key = process.env.EXPO_PUBLIC_GEOAPIFY_API_KEY?.trim();
   if (!key) throw new Error('Geoapify API key is missing');
@@ -80,17 +83,28 @@ async function searchPlaces(categoryList: string, bounds: MapBounds, limit: numb
   }
 }
 
-export async function findImportantGeoapify(bounds: MapBounds): Promise<GeoapifyPlace[]> {
-  const results = await Promise.allSettled([
+export function findImportantGeoapify(bounds: MapBounds): Promise<GeoapifyPlace[]> {
+  const cacheKey = `${getLanguage()}|${[bounds.west, bounds.south, bounds.east, bounds.north].map((value) => value.toFixed(4)).join(',')}`;
+  const cached = placeCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+
+  const promise = Promise.allSettled([
     searchPlaces(categories[0], bounds, 200),
     searchPlaces(categories[1], bounds, 150),
-  ]);
-  const successful = results.filter((result): result is PromiseFulfilledResult<GeoapifyPlace[]> => result.status === 'fulfilled');
-  if (!successful.length) throw (results[0] as PromiseRejectedResult).reason;
-  const places = [...new Map(successful.flatMap((result) => result.value).map((place) => [place.id, place])).values()];
-  if (!places.length) {
-    const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-    if (failed) throw failed.reason;
-  }
-  return places;
+  ]).then((results) => {
+    const successful = results.filter((result): result is PromiseFulfilledResult<GeoapifyPlace[]> => result.status === 'fulfilled');
+    if (!successful.length) throw (results[0] as PromiseRejectedResult).reason;
+    const places = [...new Map(successful.flatMap((result) => result.value).map((place) => [place.id, place])).values()];
+    if (!places.length) {
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failed) throw failed.reason;
+    }
+    return places;
+  }).catch((error: unknown) => {
+    placeCache.delete(cacheKey);
+    throw error;
+  });
+  placeCache.set(cacheKey, { expiresAt: Date.now() + CACHE_DURATION_MS, promise });
+  if (placeCache.size > 24) placeCache.delete(placeCache.keys().next().value!);
+  return promise;
 }

@@ -1,5 +1,4 @@
 import { LocalizedError, message } from '../i18n/core';
-import { analyzeImageLocally } from './local-ai';
 
 export type AiDetection = {
   className: string;
@@ -29,6 +28,7 @@ export function getAiApiUrl(): string {
  */
 export async function analyzeImage(uri: string): Promise<AiAnalysis> {
   try {
+    const { analyzeImageLocally } = await import('./local-ai');
     return await analyzeImageLocally(uri);
   } catch (error) {
     if (error instanceof LocalizedError) throw error;

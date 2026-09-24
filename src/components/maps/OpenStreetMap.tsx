@@ -31,12 +31,10 @@ const createMapDocument = (language: string) => `<!doctype html>
 <head>
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <meta charset="utf-8" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;600;700&amp;display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://unpkg.com" crossorigin />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <style>
-    html,body,#map{height:100%;width:100%;margin:0;background:#e8eef2;font-family:'Noto Sans Thai',sans-serif}
+    html,body,#map{height:100%;width:100%;margin:0;background:#e8eef2;font-family:system-ui,sans-serif}
     .leaflet-container{background:#e8eef2;outline:none}
     .leaflet-control-attribution{font-size:10px!important;background:rgba(255,255,255,.9)!important;padding:2px 5px!important}
     .stepable-pin{width:22px;height:22px;border:4px solid #fff;border-radius:50%;background:#2563eb;box-shadow:0 2px 9px #0f172a66}
@@ -60,6 +58,7 @@ const createMapDocument = (language: string) => `<!doctype html>
       const map=L.map('map',{zoomControl:false,preferCanvas:true,zoomSnap:0.5,minZoom:3,maxZoom:19}).setView([0,0],3);
       L.tileLayer('${MAP_TILE_URL}',{maxZoom:19,updateWhenIdle:true,updateWhenZooming:false,keepBuffer:1,attribution:'${MAP_ATTRIBUTION}'}).addTo(map);
       let userMarker=null,destinationMarker=null,routeLine=null,otherMarkers=[],poiMarkers=[];
+      let lastDestinationPayload='null',lastRoutePayload='null';
       const userIcon=L.divIcon({className:'',html:'<div class="stepable-pin"></div>',iconSize:[22,22],iconAnchor:[11,11]});
       const destinationIcon=L.divIcon({className:'',html:'<div class="stepable-destination"></div>',iconSize:[29,29],iconAnchor:[14,22]});
       const safePopup=(text)=>{const node=document.createElement('span');node.textContent=String(text||'');return node;};
@@ -70,11 +69,20 @@ const createMapDocument = (language: string) => `<!doctype html>
         center:(lat,lon,zoom)=>map.setView([lat,lon],zoom||17,{animate:true}),
         setData:(data)=>{
           if(data.user){if(!userMarker)userMarker=L.marker([data.user.latitude,data.user.longitude],{icon:userIcon,zIndexOffset:900}).addTo(map);else userMarker.setLatLng([data.user.latitude,data.user.longitude]);}
-          if(data.destination){if(destinationMarker)map.removeLayer(destinationMarker);destinationMarker=L.marker([data.destination.coordinates.latitude,data.destination.coordinates.longitude],{icon:destinationIcon,zIndexOffset:700}).addTo(map);destinationMarker.bindPopup(safePopup(data.destination.label));}
-          else if(destinationMarker){map.removeLayer(destinationMarker);destinationMarker=null;}
+          const destinationPayload=JSON.stringify(data.destination||null);
+          if(destinationPayload!==lastDestinationPayload){
+            if(destinationMarker)map.removeLayer(destinationMarker);
+            destinationMarker=data.destination?L.marker([data.destination.coordinates.latitude,data.destination.coordinates.longitude],{icon:destinationIcon,zIndexOffset:700}).addTo(map):null;
+            if(destinationMarker)destinationMarker.bindPopup(safePopup(data.destination.label));
+            lastDestinationPayload=destinationPayload;
+          }
           if(data.markers)setOtherMarkers(data.markers);
-          if(data.route){if(routeLine)map.removeLayer(routeLine);routeLine=L.polyline(data.route.map((point)=>[point.latitude,point.longitude]),{color:'#2563eb',weight:6,opacity:.92,lineCap:'round',lineJoin:'round'}).addTo(map);}
-          if(data.route===null&&routeLine){map.removeLayer(routeLine);routeLine=null;}
+          const routePayload=JSON.stringify(data.route||null);
+          if(routePayload!==lastRoutePayload){
+            if(routeLine)map.removeLayer(routeLine);
+            routeLine=data.route&&data.route.length?L.polyline(data.route.map((point)=>[point.latitude,point.longitude]),{color:'#2563eb',weight:6,opacity:.92,lineCap:'round',lineJoin:'round'}).addTo(map):null;
+            lastRoutePayload=routePayload;
+          }
           if(data.fit){const points=[];if(data.user)points.push([data.user.latitude,data.user.longitude]);if(data.destination)points.push([data.destination.coordinates.latitude,data.destination.coordinates.longitude]);if(routeLine)points.push(...routeLine.getLatLngs());points.push(...(data.fitCoordinates||[]).map((point)=>[point.latitude,point.longitude]));if(points.length>1)map.fitBounds(L.latLngBounds(points).pad(.2),{maxZoom:17});else if(points.length===1)map.setView(points[0],17);}
         }
       };
@@ -98,6 +106,7 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
   const [error, setError] = useState(false);
   const centerApplied = useRef('');
   const lastFitKey = useRef('');
+  const lastMapData = useRef('');
   const source = useMemo(() => ({ html: createMapDocument(language) }), [language]);
   const inject = useCallback((source: string) => webView.current?.injectJavaScript(`${source};true;`), []);
   const centerOn = useCallback((coordinates: Coordinates) => inject(`window.StepAbleMap&&window.StepAbleMap.center(${coordinates.latitude},${coordinates.longitude},17)`), [inject]);
@@ -114,8 +123,9 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
   const shouldFit = Boolean(fitKey && fitKey !== lastFitKey.current);
   const mapData = useMemo(() => JSON.stringify({ user: userLocation, destination, markers, fitCoordinates, route: route ?? null, fit: shouldFit }), [userLocation, destination, markers, fitCoordinates, route, shouldFit]);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || lastMapData.current === mapData) return;
     inject(`window.StepAbleMap&&window.StepAbleMap.setData(${mapData})`);
+    lastMapData.current = mapData;
     if (shouldFit) lastFitKey.current = fitKey;
   }, [fitKey, inject, mapData, ready, readyVersion, shouldFit]);
 
@@ -132,6 +142,7 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
     if (message.type === 'ready') {
       centerApplied.current = '';
       lastFitKey.current = '';
+      lastMapData.current = '';
       setReady(language);
       setReadyVersion((value) => value + 1);
       setError(false);

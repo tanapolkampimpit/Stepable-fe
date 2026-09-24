@@ -157,32 +157,38 @@ export const placeMarkerVisibilityScript = `
 
 export const placeMarkerLayerScript = `
   let lastMarkerPayload='';
+  let markerEntries=new Map();
   const setOtherMarkers=(points)=>{
     const payload=JSON.stringify(points||[]);
     if(payload===lastMarkerPayload){updatePoiVisibility();return;}
     lastMarkerPayload=payload;
-    otherMarkers.forEach((marker)=>map.removeLayer(marker));
-    poiMarkers.forEach(({marker})=>{if(map.hasLayer(marker))map.removeLayer(marker);});
-    otherMarkers=[];poiMarkers=[];
+    const nextEntries=new Map(),nextOtherMarkers=[],nextPoiMarkers=[];
     (points||[]).forEach((point)=>{
-      let marker;
-      if(point.reportIcon&&reportIconPaths[point.reportIcon]){
-        const color=typeof point.color==='string'&&/^#[0-9a-f]{6}$/i.test(point.color)?point.color:'#dc2626';
-        const svg='<svg viewBox="0 0 24 24">'+reportIconPaths[point.reportIcon].map((path)=>'<path d="'+path+'"/>').join('')+'</svg>';
-        const icon=L.divIcon({className:'',html:'<div class="stepable-report" style="background-color:'+color+'">'+svg+'</div>',iconSize:[30,30],iconAnchor:[15,15]});
-        marker=L.marker([point.coordinates.latitude,point.coordinates.longitude],{icon}).addTo(map);
-        otherMarkers.push(marker);
-      }else if(point.placeIcon&&placeIconPaths[point.placeIcon]){
-        marker=L.marker([point.coordinates.latitude,point.coordinates.longitude],{icon:makePlaceIcon(point)});
-        if(point.markerKind==='poi')poiMarkers.push({marker,point});
-        else{marker.addTo(map);otherMarkers.push(marker);}
-      }else{
-        marker=L.circleMarker([point.coordinates.latitude,point.coordinates.longitude],{radius:8,color:'#fff',weight:3,fillColor:point.color||'#f97316',fillOpacity:1}).addTo(map);
-        otherMarkers.push(marker);
+      const signature=JSON.stringify(point);
+      const previous=markerEntries.get(point.id);
+      let marker=previous&&previous.signature===signature?previous.marker:null;
+      if(!marker){
+        if(previous&&map.hasLayer(previous.marker))map.removeLayer(previous.marker);
+        if(point.reportIcon&&reportIconPaths[point.reportIcon]){
+          const color=typeof point.color==='string'&&/^#[0-9a-f]{6}$/i.test(point.color)?point.color:'#dc2626';
+          const svg='<svg viewBox="0 0 24 24">'+reportIconPaths[point.reportIcon].map((path)=>'<path d="'+path+'"/>').join('')+'</svg>';
+          const icon=L.divIcon({className:'',html:'<div class="stepable-report" style="background-color:'+color+'">'+svg+'</div>',iconSize:[30,30],iconAnchor:[15,15]});
+          marker=L.marker([point.coordinates.latitude,point.coordinates.longitude],{icon}).addTo(map);
+        }else if(point.placeIcon&&placeIconPaths[point.placeIcon]){
+          marker=L.marker([point.coordinates.latitude,point.coordinates.longitude],{icon:makePlaceIcon(point)});
+          if(point.markerKind!=='poi')marker.addTo(map);
+        }else{
+          marker=L.circleMarker([point.coordinates.latitude,point.coordinates.longitude],{radius:8,color:'#fff',weight:3,fillColor:point.color||'#f97316',fillOpacity:1}).addTo(map);
+        }
+        if(point.placeIcon||point.reportIcon)marker.on('click',()=>send({type:'markerPress',id:point.id}));
+        else marker.bindPopup(safePopup(point.label));
       }
-      if(point.placeIcon||point.reportIcon)marker.on('click',()=>send({type:'markerPress',id:point.id}));
-      else marker.bindPopup(safePopup(point.label));
+      if(point.markerKind==='poi'&&point.placeIcon&&placeIconPaths[point.placeIcon])nextPoiMarkers.push({marker,point});
+      else nextOtherMarkers.push(marker);
+      nextEntries.set(point.id,{marker,signature});
     });
+    markerEntries.forEach((entry,id)=>{if(!nextEntries.has(id)&&map.hasLayer(entry.marker))map.removeLayer(entry.marker);});
+    markerEntries=nextEntries;otherMarkers=nextOtherMarkers;poiMarkers=nextPoiMarkers;
     updatePoiVisibility();
   };
 `;

@@ -59,7 +59,7 @@ export default function HomePage() {
 
   const loadImportantPlaces = useCallback(function loadImportantPlaces(bounds: MapBounds, zoom: number, retry = false) {
     const coverage = poiCoverage.current;
-    if (!retry && coverage && zoom <= poiCoverageZoom.current
+    if (!retry && coverage && zoom < poiCoverageZoom.current + 1.5
       && bounds.west >= coverage.west && bounds.east <= coverage.east
       && bounds.south >= coverage.south && bounds.north <= coverage.north) return;
     if (!retry) poiRetryCount.current = 0;
@@ -77,9 +77,7 @@ export default function HomePage() {
     poiCoverage.current = queryBounds;
     poiCoverageZoom.current = zoom;
     setPoiStatus('loading');
-    const requestPlaces = hasGeoapifyKey
-      ? findImportantGeoapify(queryBounds).then((found) => found.length ? found : findImportantOsm(queryBounds).catch(() => found))
-      : findImportantOsm(queryBounds);
+    const requestPlaces = hasGeoapifyKey ? findImportantGeoapify(queryBounds) : findImportantOsm(queryBounds);
     void requestPlaces.then((found) => {
       if (request !== poiRequest.current) return;
       poiRetryCount.current = 0;
@@ -129,7 +127,7 @@ export default function HomePage() {
       setPoiStatus('idle');
       return;
     }
-    poiDebounceTimer.current = setTimeout(() => loadImportantPlaces(bounds, zoom), 350);
+    poiDebounceTimer.current = setTimeout(() => loadImportantPlaces(bounds, zoom), 250);
   }, [loadImportantPlaces]);
 
   useEffect(() => () => {

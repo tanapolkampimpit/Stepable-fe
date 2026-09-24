@@ -30,7 +30,7 @@ async function fetchOverpass(query: string): Promise<OsmElement[]> {
   let lastError: unknown;
   for (const endpoint of OVERPASS_APIS) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
+    const timeout = setTimeout(() => controller.abort(), 8000);
     try {
       const response = await fetch(endpoint, {
         method: 'POST',

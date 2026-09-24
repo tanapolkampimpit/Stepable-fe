@@ -39,6 +39,7 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
   const [error, setError] = useState(false);
   const [revision, setRevision] = useState(0);
   const lastFitKey = useRef('');
+  const lastMapData = useRef('');
   const document = useMemo(() => createMapDocument(language), [language]);
 
   const send = useCallback((message: object) => {
@@ -67,6 +68,7 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
       if (message.source !== 'stepable-map') return;
       if (message.type === 'ready') {
         lastFitKey.current = '';
+        lastMapData.current = '';
         setReady(language);
         setReadyVersion((value) => value + 1);
         setError(false);
@@ -85,8 +87,10 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
   }, [onMapPress, onMarkerPress, onViewportChange, revision, language]);
 
   useEffect(() => {
-    if (!ready) return;
+    const payload = JSON.stringify(mapData);
+    if (!ready || lastMapData.current === payload) return;
     send({ type: 'setData', data: mapData });
+    lastMapData.current = payload;
     if (shouldFit) lastFitKey.current = fitKey;
   }, [fitKey, mapData, ready, readyVersion, send, shouldFit]);
 
@@ -123,12 +127,10 @@ function createMapDocument(language: string) {
 <html lang="${language}"><head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;600;700&amp;display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://unpkg.com" crossorigin />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <style>
-    html,body,#map{height:100%;width:100%;margin:0;background:#e8eef2;font-family:'Noto Sans Thai',sans-serif}
+    html,body,#map{height:100%;width:100%;margin:0;background:#e8eef2;font-family:system-ui,sans-serif}
     .leaflet-container{background:#e8eef2;outline:none}.leaflet-control-attribution{font-size:10px!important;background:rgba(255,255,255,.9)!important;padding:2px 5px!important}
     .stepable-pin{width:22px;height:22px;border:4px solid #fff;border-radius:50%;background:#2563eb;box-shadow:0 2px 9px #0f172a66}
     .stepable-destination{position:relative;display:flex;align-items:center;justify-content:center;width:21px;height:21px;border:4px solid #fff;border-radius:50% 50% 50% 2px;background:#dc2626;transform:rotate(-45deg);box-shadow:0 2px 9px #0f172a55}
@@ -148,6 +150,7 @@ function createMapDocument(language: string) {
     const map=L.map('map',{zoomControl:false,preferCanvas:true,zoomSnap:.5,minZoom:3,maxZoom:19}).setView([0,0],3);
     const tiles=L.tileLayer('${MAP_TILE_URL}',{maxZoom:19,updateWhenIdle:true,updateWhenZooming:false,keepBuffer:1,attribution:'${MAP_ATTRIBUTION}'}).addTo(map);
     let userMarker=null,destinationMarker=null,routeLine=null,otherMarkers=[],poiMarkers=[];
+    let lastDestinationPayload='null',lastRoutePayload='null';
     const userIcon=L.divIcon({className:'',html:'<div class="stepable-pin"></div>',iconSize:[22,22],iconAnchor:[11,11]});
     const destinationIcon=L.divIcon({className:'',html:'<div class="stepable-destination"></div>',iconSize:[29,29],iconAnchor:[14,22]});
     const safePopup=(text)=>{const node=document.createElement('span');node.textContent=String(text||'');return node;};
@@ -155,9 +158,20 @@ function createMapDocument(language: string) {
     ${placeMarkerLayerScript}
     const setData=(data)=>{
       if(data.user){if(!userMarker)userMarker=L.marker([data.user.latitude,data.user.longitude],{icon:userIcon,zIndexOffset:900}).addTo(map);else userMarker.setLatLng([data.user.latitude,data.user.longitude]);}
-      if(data.destination){if(destinationMarker)map.removeLayer(destinationMarker);destinationMarker=L.marker([data.destination.coordinates.latitude,data.destination.coordinates.longitude],{icon:destinationIcon,zIndexOffset:700}).addTo(map);destinationMarker.bindPopup(safePopup(data.destination.label));}else if(destinationMarker){map.removeLayer(destinationMarker);destinationMarker=null;}
+      const destinationPayload=JSON.stringify(data.destination||null);
+      if(destinationPayload!==lastDestinationPayload){
+        if(destinationMarker)map.removeLayer(destinationMarker);
+        destinationMarker=data.destination?L.marker([data.destination.coordinates.latitude,data.destination.coordinates.longitude],{icon:destinationIcon,zIndexOffset:700}).addTo(map):null;
+        if(destinationMarker)destinationMarker.bindPopup(safePopup(data.destination.label));
+        lastDestinationPayload=destinationPayload;
+      }
       setOtherMarkers(data.markers);
-      if(data.route){if(routeLine)map.removeLayer(routeLine);routeLine=L.polyline(data.route.map((point)=>[point.latitude,point.longitude]),{color:'#2563eb',weight:6,opacity:.92,lineCap:'round',lineJoin:'round'}).addTo(map);}else if(routeLine){map.removeLayer(routeLine);routeLine=null;}
+      const routePayload=JSON.stringify(data.route||null);
+      if(routePayload!==lastRoutePayload){
+        if(routeLine)map.removeLayer(routeLine);
+        routeLine=data.route&&data.route.length?L.polyline(data.route.map((point)=>[point.latitude,point.longitude]),{color:'#2563eb',weight:6,opacity:.92,lineCap:'round',lineJoin:'round'}).addTo(map):null;
+        lastRoutePayload=routePayload;
+      }
       if(data.fit){const points=[];if(data.user)points.push([data.user.latitude,data.user.longitude]);if(data.destination)points.push([data.destination.coordinates.latitude,data.destination.coordinates.longitude]);if(routeLine)points.push(...routeLine.getLatLngs());points.push(...(data.fitCoordinates||[]).map((point)=>[point.latitude,point.longitude]));if(points.length>1)map.fitBounds(L.latLngBounds(points).pad(.2),{maxZoom:17});else if(points.length===1)map.setView(points[0],17);}
     };
     window.addEventListener('message',(event)=>{const message=event.data;if(!message||message.source!=='stepable-parent')return;if(message.type==='setData')setData(message.data||{});if(message.type==='center')map.setView([message.latitude,message.longitude],message.zoom||17,{animate:true});if(message.type==='zoom')map.setZoom(Math.max(3,Math.min(19,map.getZoom()+message.step)));});

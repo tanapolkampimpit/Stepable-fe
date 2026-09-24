@@ -6,6 +6,7 @@ import * as Location from 'expo-location';
 import { distanceMeters, reverseGeocodeOsm, type Coordinates } from '../../services/geo';
 import { fetchCurrentWeather, fetchReports, resolveReportPhotoUrl } from '../../services/api';
 import { AppDataContext } from './AppDataContext';
+import { FontScaleContext } from './FontScaleContext';
 import { DEFAULT_PREFERENCES, STORAGE_KEYS } from './constants';
 import type {
   AppDataValue,
@@ -329,5 +330,5 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     savePlace, removeSavedPlace, reports, refreshReports, addReport, navigationPlan,
   ]);
 
-  return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
+  return <FontScaleContext.Provider value={preferences.fontScale}><AppDataContext.Provider value={value}>{children}</AppDataContext.Provider></FontScaleContext.Provider>;
 }

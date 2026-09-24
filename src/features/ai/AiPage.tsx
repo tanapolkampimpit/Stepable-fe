@@ -3,7 +3,7 @@ import { errorMessage, t, useLanguage, useMessageState } from '../../i18n';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, PanResponder, Pressable, Share, StyleSheet, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
 import { CameraView, useCameraPermissions, type CameraType } from 'expo-camera';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useIsFocused } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
 import { Icon } from '../../components/ui/Icon';
@@ -40,6 +40,7 @@ function getPinchDistance(event: GestureResponderEvent) {
 
 export default function AiPage() {
   const { locale } = useLanguage();
+  const isFocused = useIsFocused();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const { left: insetLeft, right: insetRight, top: insetTop, bottom: insetBottom } = useSafeAreaInsets();
   const cameraRef = useRef<CameraView>(null);
@@ -62,6 +63,12 @@ export default function AiPage() {
   const miniMapGestureStart = useRef<{ left: number; top: number; scale: number; distance: number }>({ left: 0, top: 0, scale: 1, distance: 0 });
   const [miniMapPosition, setMiniMapPosition] = useState<MiniMapPosition | null>(null);
   const [miniMapScale, setMiniMapScale] = useState(1);
+  const [miniMapReady, setMiniMapReady] = useState(false);
+  useEffect(() => {
+    if (!isFocused || !permission?.granted || miniMapReady) return;
+    const timer = setTimeout(() => setMiniMapReady(true), 400);
+    return () => clearTimeout(timer);
+  }, [isFocused, miniMapReady, permission?.granted]);
   useFocusEffect(useCallback(() => () => {
     setLiveMode(false);
     setAnalysis(null);
@@ -315,7 +322,7 @@ export default function AiPage() {
             </View>
           </View>
           <View style={styles.miniMapFrame}>
-            {location ? <>
+            {location && miniMapReady ? <>
               <OpenStreetMap
                 ref={miniMapRef}
                 center={location}
@@ -333,7 +340,7 @@ export default function AiPage() {
                 <View style={styles.miniMapZoomDivider} />
                 <Pressable onPress={() => miniMapRef.current?.zoomOut()} style={styles.miniMapZoomButton} accessibilityRole="button" accessibilityLabel={t('home.zoomOut')}><Icon name="minus" size={16} color={colors.forest} /></Pressable>
               </View>
-            </> : <View style={styles.miniMapEmpty}><Icon name="locate" size={20} color={colors.forest} /><Text style={styles.miniMapEmptyText}>{t('home.findingYourLocation')}</Text></View>}
+            </> : <View style={styles.miniMapEmpty}><Icon name="locate" size={20} color={colors.forest} /><Text style={styles.miniMapEmptyText}>{location ? t('common.loadingOpenstreetmap') : t('home.findingYourLocation')}</Text></View>}
           </View>
         </View>
       </View> : null}
