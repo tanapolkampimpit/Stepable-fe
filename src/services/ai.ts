@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { analyzeImageLocally } from './local-ai';
 
 export type AiDetection = {
   className: string;
@@ -24,25 +24,5 @@ export function getAiApiUrl() {
 }
 
 export async function analyzeImage(uri: string): Promise<AiAnalysis> {
-  const endpoint = getAiApiUrl();
-  const body = new FormData();
-  if (Platform.OS === 'web') {
-    const response = await fetch(uri);
-    if (!response.ok) throw new Error('อ่านภาพสำหรับ AI ไม่สำเร็จ');
-    body.append('file', await response.blob(), 'stepable-camera.jpg');
-  } else {
-    body.append('file', { uri, name: 'stepable-camera.jpg', type: 'image/jpeg' } as unknown as Blob);
-  }
-  let response: Response;
-  try {
-    response = await fetch(`${endpoint}/v1/analyze`, { method: 'POST', body });
-  } catch {
-    if (/localhost|127\.0\.0\.1/.test(endpoint)) {
-      throw new Error(`มือถือเชื่อมต่อ ${endpoint} ไม่ได้: ใช้ IP ของคอมพิวเตอร์ในวง LAN แทน localhost`);
-    }
-    throw new Error(`เชื่อมต่อ AI server ไม่ได้ที่ ${endpoint}: ตรวจว่า server เปิดอยู่และมือถืออยู่ Wi-Fi เดียวกัน`);
-  }
-  const payload = await response.json().catch(() => null) as { detail?: string } | null;
-  if (!response.ok) throw new Error(payload?.detail || `AI server ตอบกลับ ${response.status}`);
-  return payload as unknown as AiAnalysis;
+  return analyzeImageLocally(uri);
 }
