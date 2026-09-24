@@ -11,10 +11,10 @@ import { useBottomNavigation } from '../../components/navigation/BottomNavigatio
 import { searchOsmPlaces } from '../../services/geo';
 import { colors } from '../../theme';
 
-const categories: { query: string; label: string; icon: 'restaurant' | 'bed' | 'fuel' }[] = [
-  { query: 'ร้านอาหาร', label: 'ร้านอาหาร', icon: 'restaurant' },
-  { query: 'โรงแรม ที่พัก', label: 'ที่พัก', icon: 'bed' },
-  { query: 'ปั๊มน้ำมัน', label: 'ปั๊มน้ำมัน', icon: 'fuel' },
+const categories: { query: string; label: string; icon: IconName }[] = [
+  { query: 'ทางลาดสำหรับรถเข็น', label: 'ทางลาด', icon: 'wheelchair' },
+  { query: 'ทางข้ามคนเดินเท้า', label: 'ทางข้าม', icon: 'crosswalk' },
+  { query: 'สวนสาธารณะ', label: 'สวนสาธารณะ', icon: 'park' },
 ];
 
 export default function HomePage() {
@@ -82,7 +82,7 @@ export default function HomePage() {
     await Share.share({ title: 'ตำแหน่ง StepAble', message: `${placeLabel}\n${url}` });
   };
 
-  const weatherText = weather ? `${Math.round(weather.temperature)}°C · ${weatherLabel(weather.code)}` : locationStatus === 'denied' ? 'ต้องเปิด GPS' : 'กำลังโหลดอากาศ';
+  const weatherText = weather ? `${Math.round(weather.temperature)}°C · ${weatherLabel(weather.code)}` : locationStatus === 'denied' ? 'Enable GPS' : 'Loading weather';
   return (
     <View style={styles.screen}>
       <OpenStreetMap ref={mapRef} center={location} userLocation={location} markers={visibleMarkers} style={styles.map} />
@@ -93,11 +93,14 @@ export default function HomePage() {
             <Text numberOfLines={1} style={styles.pillText}>{location ? placeLabel : locationStatus === 'denied' ? 'เปิดตำแหน่งเพื่อดูสถานที่จริง' : 'กำลังหาตำแหน่งจริง…'}</Text>
             <Icon name="chevron-down" size={16} color={colors.forest} />
           </Pressable>
-          <Pressable onPress={() => { void updateWeather(); }} style={styles.weather} accessibilityRole="button" accessibilityLabel={`อากาศ: ${weatherText}. แตะเพื่ออัปเดต`}>
+          <Pressable onPress={() => { void updateWeather(); }} style={({ pressed }) => [styles.weather, pressed && styles.weatherPressed]} accessibilityRole="button" accessibilityLabel={`Weather: ${weatherText}. Tap to refresh`}>
             <WeatherGlyph code={weather?.code} />
             <Text numberOfLines={1} style={styles.weatherTemperature}>{weather ? `${Math.round(weather.temperature)}°C` : '--°'}</Text>
             <View style={styles.weatherDivider} />
-            <Text numberOfLines={1} style={styles.weatherCondition}>{weather ? weatherLabel(weather.code) : locationStatus === 'denied' ? 'เปิด GPS' : 'กำลังโหลด'}</Text>
+            <View style={styles.weatherConditionBadge}>
+              <View style={styles.weatherDot} />
+              <Text numberOfLines={1} style={styles.weatherCondition}>{weather ? weatherLabel(weather.code) : locationStatus === 'denied' ? 'Enable GPS' : 'Loading'}</Text>
+            </View>
           </Pressable>
         </View>
         <View style={styles.search}>
@@ -121,12 +124,17 @@ export default function HomePage() {
         {mapNotice ? <View style={styles.notice}><Text numberOfLines={2} style={styles.noticeText}>{mapNotice}</Text></View> : null}
         {loadingCategory ? <ActivityIndicator style={styles.activity} color={colors.forest} /> : null}
         <View style={styles.mapRail}>
-          <RailButton icon="map" label={showReports ? 'ซ่อนรายงานในอุปกรณ์นี้' : 'แสดงรายงานในอุปกรณ์นี้'} selected={showReports} onPress={() => setShowReports((value) => !value)} />
-          <RailButton icon="navigation" label={isLocating ? 'กำลังอัปเดตตำแหน่ง' : 'แสดงตำแหน่งปัจจุบัน'} primary onPress={() => { void centerOnUser(); }} />
-          <RailButton icon="plus" label="ขยายแผนที่" onPress={() => mapRef.current?.zoomIn()} />
-          <RailButton icon="minus" label="ย่อแผนที่" onPress={() => mapRef.current?.zoomOut()} />
-          <RailButton icon="send" label="แชร์ตำแหน่งปัจจุบัน" onPress={() => { void sharePosition(); }} />
-          <RailButton icon="warning" label="รายงานปัญหาทางเท้า" onPress={() => router.push('/report-issue')} />
+          <View style={styles.railGroup}>
+            <RailButton icon="locate" label={isLocating ? 'กำลังอัปเดตตำแหน่ง' : 'แสดงตำแหน่งปัจจุบัน'} onPress={() => { void centerOnUser(); }} />
+            <RailButton icon="plus" label="ขยายแผนที่" onPress={() => mapRef.current?.zoomIn()} />
+            <RailButton icon="minus" label="ย่อแผนที่" onPress={() => mapRef.current?.zoomOut()} />
+          </View>
+          <View style={styles.railGroup}>
+            <RailButton icon="map" label={showReports ? 'ซ่อนรายงานในอุปกรณ์นี้' : 'แสดงรายงานในอุปกรณ์นี้'} selected={showReports} onPress={() => setShowReports((value) => !value)} />
+            <RailButton icon="navigation" label="เลือกเส้นทางเดิน" primary onPress={() => router.push('/(tabs)/routes')} />
+            <RailButton icon="send" label="แชร์ตำแหน่งปัจจุบัน" onPress={() => { void sharePosition(); }} />
+            <RailButton icon="warning" label="รายงานปัญหาทางเท้า" onPress={() => router.push('/report-issue')} />
+          </View>
         </View>
         <Pressable onPress={() => { void updateWeather(); }} style={styles.sourceNote} accessibilityRole="button" accessibilityLabel={weatherMessage}>
           <Text style={styles.sourceText}>© OpenStreetMap · {weatherMessage}</Text>
@@ -136,13 +144,13 @@ export default function HomePage() {
   );
 }
 
-function CategoryButton({ icon, label, onPress }: { icon: 'restaurant' | 'bed' | 'fuel'; label: string; onPress: () => void }) {
-  return <Pressable onPress={onPress} style={styles.categoryButton} accessibilityRole="button" accessibilityLabel={`ค้นหา${label}`}><Icon name={icon} size={23} color="#174589" /></Pressable>;
+function CategoryButton({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
+  return <Pressable onPress={onPress} style={styles.categoryButton} accessibilityRole="button" accessibilityLabel={`ค้นหา${label}`}><Icon name={icon} size={20} color="#174589" /></Pressable>;
 }
 
 function RailButton({ icon, label, onPress, primary = false, selected = false }: { icon: IconName; label: string; onPress: () => void; primary?: boolean; selected?: boolean }) {
   return <Pressable onPress={onPress} style={[styles.railButton, primary && styles.primaryRail, selected && styles.selectedRail]} accessibilityRole="button" accessibilityLabel={label}>
-    <Icon name={icon} size={21} color={primary ? '#FFFFFF' : colors.forest} />
+    <Icon name={icon} size={18} color={primary ? '#FFFFFF' : colors.forest} />
   </Pressable>;
 }
 
@@ -151,7 +159,7 @@ function WeatherGlyph({ code }: { code?: number }) {
 
   if (kind === 'sun') {
     return (
-      <Svg width={31} height={31} viewBox="0 0 32 32" accessibilityElementsHidden>
+      <Svg width={31} height={31} viewBox="0 0 32 32">
         <G stroke="#FDB43B" strokeWidth={2.5} strokeLinecap="round">
           <Line x1={16} y1={2} x2={16} y2={5} />
           <Line x1={16} y1={27} x2={16} y2={30} />
@@ -169,7 +177,7 @@ function WeatherGlyph({ code }: { code?: number }) {
 
   if (kind === 'fog') {
     return (
-      <Svg width={31} height={31} viewBox="0 0 32 32" accessibilityElementsHidden>
+      <Svg width={31} height={31} viewBox="0 0 32 32">
         <G stroke="#8FB7F6" strokeWidth={3} strokeLinecap="round">
           <Line x1={5} y1={10} x2={24} y2={10} />
           <Line x1={8} y1={16} x2={27} y2={16} />
@@ -183,7 +191,7 @@ function WeatherGlyph({ code }: { code?: number }) {
   const rain = kind === 'rain' || storm;
   const snow = kind === 'snow';
   return (
-    <Svg width={34} height={31} viewBox="0 0 36 32" accessibilityElementsHidden>
+    <Svg width={34} height={31} viewBox="0 0 36 32">
       <Circle cx={21} cy={10} r={7} fill={storm ? '#8CA0B9' : '#AFCBFA'} opacity={0.72} />
       <Path d="M9 24h18.2a6.8 6.8 0 0 0 .7-13.6A9.5 9.5 0 0 0 10 9.1 7.5 7.5 0 0 0 9 24Z" fill={storm ? '#71869F' : '#6297EC'} />
       {rain ? <G stroke="#3F9CF7" strokeWidth={2.5} strokeLinecap="round"><Line x1={11} y1={26} x2={9.5} y2={29} /><Line x1={24} y1={26} x2={22.5} y2={29} /></G> : null}
@@ -203,15 +211,15 @@ function weatherKind(code?: number): 'sun' | 'cloud' | 'rain' | 'storm' | 'fog' 
 }
 
 function weatherLabel(code: number) {
-  if (code === 0) return 'แดดออก';
-  if ([1, 2].includes(code)) return 'มีเมฆบางส่วน';
-  if (code === 3) return 'มีเมฆมาก';
-  if ([45, 48].includes(code)) return 'หมอก';
-  if (code >= 51 && code <= 67) return 'ฝนตก';
-  if (code >= 71 && code <= 77) return 'หิมะ';
-  if (code >= 80 && code <= 82) return 'ฝนตก';
-  if (code >= 95) return 'พายุฝนฟ้าคะนอง';
-  return 'สภาพอากาศล่าสุด';
+  if (code === 0) return 'Sunny';
+  if ([1, 2].includes(code)) return 'Partly cloudy';
+  if (code === 3) return 'Cloudy';
+  if ([45, 48].includes(code)) return 'Foggy';
+  if (code >= 51 && code <= 67) return 'Rain';
+  if (code >= 71 && code <= 77) return 'Snow';
+  if (code >= 80 && code <= 82) return 'Rain';
+  if (code >= 95) return 'Thunderstorm';
+  return 'Latest weather';
 }
 
 const styles = StyleSheet.create({
@@ -222,17 +230,21 @@ const styles = StyleSheet.create({
   pill: { flex: 1, minHeight: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.96)', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 7, shadowColor: '#0F172A', shadowOpacity: 0.08, shadowRadius: 10, elevation: 3 },
   pillText: { color: '#102A72', fontSize: 12, fontWeight: '800', flex: 1 },
   weather: { width: '50%', minWidth: 0, minHeight: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.98)', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, gap: 7, shadowColor: '#6480A0', shadowOpacity: 0.12, shadowRadius: 12, elevation: 3 },
+  weatherPressed: { backgroundColor: '#F0F7FF', transform: [{ scale: 0.98 }] },
   weatherTemperature: { color: '#294765', fontSize: 17, fontWeight: '900', letterSpacing: -0.4, flexShrink: 0 },
   weatherDivider: { width: 1, height: 27, backgroundColor: '#D5DEE9', flexShrink: 0 },
-  weatherCondition: { color: '#7B8CA2', fontSize: 10, fontWeight: '700', flex: 1, minWidth: 0 },
+  weatherConditionBadge: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 10, backgroundColor: '#F1F6FF' },
+  weatherDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#4B8BEE' },
+  weatherCondition: { color: '#547098', fontSize: 9, fontWeight: '800', flex: 1, minWidth: 0 },
   search: { marginTop: 12, height: 58, borderRadius: 29, backgroundColor: '#FFFFFF', flexDirection: 'row', alignItems: 'center', paddingLeft: 17, paddingRight: 4, gap: 10, shadowColor: '#0F172A', shadowOpacity: 0.11, shadowRadius: 14, elevation: 4 },
   searchMain: { flex: 1, minWidth: 0, height: '100%', flexDirection: 'row', alignItems: 'center', gap: 10 },
   searchValue: { flex: 1, color: '#5572A4', fontSize: 13, fontWeight: '600' },
   searchButton: { width: 50, height: 50, borderRadius: 25, backgroundColor: colors.forest, alignItems: 'center', justifyContent: 'center' },
-  categories: { flexDirection: 'row', justifyContent: 'center', gap: 26, marginTop: 14 },
-  categoryButton: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F172A', shadowOpacity: 0.1, shadowRadius: 10, elevation: 4 },
-  mapRail: { position: 'absolute', right: 14, bottom: 116, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.96)', padding: 6, gap: 6, shadowColor: '#0F172A', shadowOpacity: 0.12, shadowRadius: 14, elevation: 6 },
-  railButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EAF2FF', alignItems: 'center', justifyContent: 'center' },
+  categories: { flexDirection: 'row', justifyContent: 'center', gap: 22, marginTop: 14 },
+  categoryButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F172A', shadowOpacity: 0.1, shadowRadius: 9, elevation: 4 },
+  mapRail: { position: 'absolute', right: 14, bottom: 45, alignItems: 'center', gap: 14 },
+  railGroup: { borderRadius: 25, backgroundColor: 'rgba(255,255,255,0.96)', padding: 5, gap: 5, shadowColor: '#0F172A', shadowOpacity: 0.12, shadowRadius: 12, elevation: 6 },
+  railButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#EAF2FF', alignItems: 'center', justifyContent: 'center' },
   primaryRail: { backgroundColor: colors.forest },
   selectedRail: { backgroundColor: '#DBEAFE', borderWidth: 1, borderColor: '#2563EB' },
   notice: { marginTop: 8, alignSelf: 'flex-start', maxWidth: '76%', paddingVertical: 7, paddingHorizontal: 11, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.95)' },

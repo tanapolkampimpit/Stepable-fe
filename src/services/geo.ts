@@ -1,3 +1,5 @@
+import { getAiApiUrl } from './ai';
+
 export type Coordinates = { latitude: number; longitude: number };
 
 export type MapPlace = {
@@ -30,6 +32,19 @@ export type WalkingRoute = {
   distanceKm: number;
   durationSeconds: number;
   maneuvers: WalkingManeuver[];
+  riskScore: number | null;
+  riskLevel: 'low' | 'medium' | 'high' | 'unknown';
+  maxRiskScore: number | null;
+  evaluatedEdges: number;
+  coverage: number;
+  riskAvailable: boolean;
+  riskMessage: string;
+  scoreSource: 'ml' | 'unavailable';
+  modelVersion: string;
+  candidateCount: number;
+  candidateIndex: number;
+  selectionMode: 'recommended' | 'shortest' | 'accessible';
+  selectionReason: string;
 };
 
 export type RouteProgress = {
@@ -58,18 +73,6 @@ type PhotonFeature = {
     osm_key?: string;
     osm_value?: string;
     type?: string;
-  };
-};
-
-type ValhallaResponse = {
-  trip?: {
-    status?: number;
-    status_message?: string;
-    legs?: {
-      shape?: string;
-      summary?: { length?: number; time?: number };
-      maneuvers?: WalkingManeuver[];
-    }[];
   };
 };
 
@@ -166,46 +169,31 @@ export async function getWalkingRoute(
   destination: Coordinates,
   preferences: WalkingPreferences = {},
 ): Promise<WalkingRoute> {
-  const options: Record<string, number | boolean | string> = {};
-  if (preferences.avoidSteps || preferences.wheelchair) options.step_penalty = 600;
-  if (preferences.wheelchair) options.type = 'wheelchair';
-  if (preferences.shortest) options.shortest = true;
-
-  const response = await fetch('https://valhalla1.openstreetmap.de/route', {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      'X-Client-Id': 'StepAble mobile application',
-    },
-    body: JSON.stringify({
-      locations: [
-        { lat: origin.latitude, lon: origin.longitude, type: 'break' },
-        { lat: destination.latitude, lon: destination.longitude, type: 'break' },
-      ],
-      costing: 'pedestrian',
-      costing_options: { pedestrian: options },
-      units: 'kilometers',
-      directions_options: { units: 'kilometers' },
-    }),
-  });
+  const endpoint = getAiApiUrl();
+  const hour = new Date().getHours();
+  let response: Response;
+  try {
+    response = await fetch(`${endpoint}/v1/routes/walking`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        origin,
+        destination,
+        preferences,
+        isNight: hour < 6 || hour >= 18,
+      }),
+    });
+  } catch {
+    if (/localhost|127\.0\.0\.1/.test(endpoint)) {
+      throw new Error(`มือถือเชื่อมต่อ ${endpoint} ไม่ได้: ใช้ IP ของคอมพิวเตอร์ในวง LAN แทน localhost`);
+    }
+    throw new Error(`เชื่อมต่อ AI server ไม่ได้ที่ ${endpoint}: ตรวจว่า server เปิดอยู่และมือถืออยู่ Wi-Fi เดียวกัน`);
+  }
   if (!response.ok) {
-    if (response.status === 429) throw new Error('บริการเส้นทางมีผู้ใช้มาก ลองใหม่อีกสักครู่');
-    throw new Error('ขอเส้นทางเดินไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วลองใหม่');
+    const error = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(error?.detail || `AI server ตอบกลับ ${response.status}`);
   }
-
-  const data = (await response.json()) as ValhallaResponse;
-  const leg = data.trip?.legs?.[0];
-  if (!leg?.shape || !leg.summary || !leg.maneuvers?.length || data.trip?.status) {
-    throw new Error(data.trip?.status_message || 'ไม่พบเส้นทางเดินระหว่างจุดนี้');
-  }
-
-  return {
-    coordinates: decodePolyline6(leg.shape),
-    distanceKm: leg.summary.length ?? 0,
-    durationSeconds: leg.summary.time ?? 0,
-    maneuvers: leg.maneuvers,
-  };
+  return await response.json() as WalkingRoute;
 }
 
 export function distanceMeters(from: Coordinates, to: Coordinates): number {

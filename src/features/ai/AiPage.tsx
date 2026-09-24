@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, StyleSheet, View } from 'react-native';
+import { Image, Pressable, Share, StyleSheet, View } from 'react-native';
 import { CameraView, useCameraPermissions, type CameraType } from 'expo-camera';
-import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
@@ -14,14 +13,12 @@ import { colors } from '../../theme';
 
 export default function AiPage() {
   const { live } = useLocalSearchParams<{ live?: string }>();
-  const liveRequested = live !== 'false';
   const cameraRef = useRef<CameraView>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const { location, navigationPlan } = useAppData();
   const [facing, setFacing] = useState<CameraType>('back');
   const [torch, setTorch] = useState(false);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
   const [analysisError, setAnalysisError] = useState('');
@@ -121,38 +118,28 @@ export default function AiPage() {
     Speech.speak(spoken, { language: 'th-TH', rate: 0.92 });
   }, [liveMode, navigationCue]);
 
-  const toggleLiveMode = () => {
-    if (!permission?.granted || photoUri) return;
-    setLiveMode((value) => !value);
-    lastAnnouncement.current = '';
-  };
-
-  const capturePhoto = async () => {
-    if (!cameraRef.current || busy) return;
-    setBusy(true);
-    try {
-      const image = await cameraRef.current.takePictureAsync({ quality: 0.82, shutterSound: true });
-      if (image?.uri) {
-        setPhotoUri(image.uri);
-        void runAnalysis(image.uri);
-      }
-    } catch {
-      setCameraError('ถ่ายภาพไม่สำเร็จ ตรวจสอบสิทธิ์กล้องและลองใหม่');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const choosePhoto = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.82 });
-    if (!result.canceled && result.assets[0]?.uri) {
-      setPhotoUri(result.assets[0].uri);
-      void runAnalysis(result.assets[0].uri);
-    }
-  };
-
   const reportPhoto = () => {
     router.push({ pathname: '/report-issue', params: { ...(location ? { lat: String(location.latitude), lon: String(location.longitude) } : {}), ...(photoUri ? { image: photoUri } : {}) } });
+  };
+
+  const speakCurrent = () => {
+    const message = navigationCue?.instruction
+      ?? (analysis ? liveAnnouncement(analysis) : 'กำลังวิเคราะห์ภาพ กรุณารอสักครู่');
+    Speech.stop();
+    Speech.speak(message, { language: 'th-TH', rate: 0.92 });
+  };
+
+  const shareAiResult = async () => {
+    const message = analysis
+      ? `StepAble AI: ${formatAnalysis(analysis)}`
+      : 'StepAble AI กำลังตรวจสอบสภาพทางเดิน';
+    await Share.share({ title: 'ผลการตรวจจาก StepAble AI', message });
+  };
+
+  const toggleLiveMode = () => {
+    if (photoUri) return;
+    setLiveMode((value) => !value);
+    lastAnnouncement.current = '';
   };
 
   return (
@@ -171,52 +158,43 @@ export default function AiPage() {
       {!photoUri && permission?.granted ? <View pointerEvents="none" style={styles.viewfinder}><View style={styles.cornerTL} /><View style={styles.cornerTR} /><View style={styles.cornerBL} /><View style={styles.cornerBR} /></View> : null}
 
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.safe} pointerEvents="box-none">
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.back} accessibilityRole="button" accessibilityLabel="กลับ"><Icon name="back" size={23} color="#174589" /></Pressable>
-          <View style={styles.headerCopy}><Text style={styles.headerTitle}>AI Camera</Text><Text style={styles.headerSub}>{photoUri ? 'ถ่ายภาพแล้ว' : liveMode ? 'AI สด · กำลังตรวจทางเดิน' : 'กล้องสด · แตะเพื่อเริ่มวิเคราะห์'}</Text></View>
-          <Pressable onPress={toggleLiveMode} disabled={!permission?.granted || Boolean(photoUri)} style={[styles.statusPill, liveMode && styles.statusPillActive]} accessibilityRole="button" accessibilityLabel={liveMode ? 'หยุดวิเคราะห์แบบสด' : 'เริ่มวิเคราะห์แบบสด'}><View style={[styles.liveDot, permission?.granted && styles.liveDotOn]} /><Text style={styles.statusText}>{liveMode ? 'วิเคราะห์สด' : permission?.granted ? 'กล้องพร้อม' : 'ต้องอนุญาต'}</Text></Pressable>
-        </View>
+        {permission?.granted ? <View style={styles.aiTopControls}>
+          <View style={styles.brandChip}>
+            <View style={styles.brandMark}><Icon name="sparkles" size={15} color="#FFFFFF" /></View>
+            <View><Text style={styles.brandTitle}>StepAble</Text><Text style={styles.brandSub}>AI Camera</Text></View>
+          </View>
+          <View style={styles.topPill}>
+            <Pressable onPress={() => setTorch((value) => !value)} style={[styles.topPillButton, torch && styles.topPillButtonActive]} accessibilityRole="button" accessibilityLabel={torch ? 'ปิดไฟฉาย' : 'เปิดไฟฉาย'}><Icon name="flashlight" size={20} color={torch ? '#FFFFFF' : '#111827'} /></Pressable>
+            <Pressable onPress={() => setFacing((value) => value === 'back' ? 'front' : 'back')} style={styles.topPillButton} accessibilityRole="button" accessibilityLabel="สลับกล้องหน้าและกล้องหลัง"><Icon name="swap" size={20} color="#111827" /></Pressable>
+          </View>
+        </View> : null}
 
         {!permission?.granted ? <Pressable onPress={() => { void requestPermission(); }} style={styles.permissionCard} accessibilityRole="button">
           <Icon name="camera" size={24} color={colors.forest} /><Text style={styles.permissionTitle}>อนุญาตให้ใช้กล้อง</Text><Text style={styles.permissionSub}>กล้องใช้เฉพาะเมื่อเปิดหน้านี้ และถ่ายเมื่อคุณกดปุ่มเท่านั้น</Text><Text style={styles.permissionAction}>อนุญาตและเปิดกล้อง</Text>
         </Pressable> : null}
-
-        {permission?.granted && !photoUri ? <View style={styles.sideControls}>
-          <Pressable onPress={() => setTorch((value) => !value)} style={[styles.roundControl, torch && styles.controlActive]} accessibilityRole="button" accessibilityLabel={torch ? 'ปิดไฟฉาย' : 'เปิดไฟฉาย'}><Icon name="flashlight" size={21} color={torch ? '#FFFFFF' : '#174589'} /></Pressable>
-          <Pressable onPress={() => setFacing((value) => value === 'back' ? 'front' : 'back')} style={styles.roundControl} accessibilityRole="button" accessibilityLabel="สลับกล้องหน้า/หลัง"><Icon name="swap" size={21} color="#174589" /></Pressable>
-        </View> : null}
       </SafeAreaView>
 
       {cameraError ? <View style={styles.cameraNotice}><Text style={styles.cameraNoticeText}>{cameraError}</Text></View> : null}
 
-      <View style={styles.sheet}>
-        <View style={styles.metrics}>
-          <Metric icon="camera" label="กล้อง" value={liveMode ? 'AI สด' : permission?.granted ? 'พร้อม' : 'ปิด'} active={Boolean(permission?.granted)} />
-          <Metric icon="flashlight" label="ไฟฉาย" value={torch ? 'เปิด' : 'ปิด'} active={torch} />
-          <Metric icon="check" label={liveRequested ? 'เฟรม AI' : 'ภาพที่ถ่าย'} value={liveRequested ? (liveMode ? 'สด' : 'หยุด') : photoUri ? '1 ภาพ' : '0 ภาพ'} active={liveRequested ? liveMode : Boolean(photoUri)} />
+      {permission?.granted ? <View style={styles.voiceDock}>
+        {navigationCue ? <View style={styles.voiceStatus} accessibilityLiveRegion="polite">
+          <View style={[styles.voiceStatusDot, navigationCue.instruction === 'อยู่นอกเส้นทาง' && styles.voiceStatusDotWarning]} />
+          <Text numberOfLines={1} style={styles.voiceStatusText}>{navigationCue.instruction} · {formatGuidanceDistance(navigationCue.distanceMeters)}</Text>
+        </View> : analysis || analysisError ? <Pressable onPress={() => { if (photoUri && !analyzing) void runAnalysis(photoUri); }} style={styles.voiceStatus} accessibilityRole="button" accessibilityLabel="วิเคราะห์ภาพด้วย AI">
+          <View style={[styles.voiceStatusDot, analysisError && styles.voiceStatusDotWarning]} />
+          <Text numberOfLines={1} style={styles.voiceStatusText}>{analysisError || (analyzing ? 'กำลังวิเคราะห์ภาพ…' : formatAnalysis(analysis as AiAnalysis))}</Text>
+        </Pressable> : <View style={styles.voiceStatus} accessibilityLiveRegion="polite">
+          <View style={[styles.voiceStatusDot, styles.voiceStatusDotReady]} />
+          <Text numberOfLines={1} style={styles.voiceStatusText}>เชื่อมต่อ AI แล้ว · พร้อมตรวจสอบ</Text>
+        </View>}
+        <View style={styles.voiceControls}>
+          <Pressable onPress={reportPhoto} style={styles.voiceCircle} accessibilityRole="button" accessibilityLabel="รายงานปัญหา"><Icon name="flag" size={21} color="#2563EB" /></Pressable>
+          <Pressable onPress={() => { void shareAiResult(); }} style={styles.voiceCircle} accessibilityRole="button" accessibilityLabel="แชร์ผลการตรวจจาก AI"><Icon name="upload" size={21} color="#111827" /></Pressable>
+          <Pressable onPress={toggleLiveMode} style={[styles.voiceStartButton, liveMode && styles.voiceStartButtonActive]} accessibilityRole="button" accessibilityLabel={liveMode ? 'หยุดตรวจด้วย AI' : 'เริ่มตรวจด้วย AI'}>{liveMode ? <Icon name="pause" size={22} color="#FFFFFF" /> : <Text style={[styles.voiceStartText, styles.voiceStartTextIdle]}>AI</Text>}</Pressable>
+          <Pressable onPress={speakCurrent} style={styles.voiceCircle} accessibilityRole="button" accessibilityLabel="อ่านผลการวิเคราะห์ออกเสียง"><Icon name="microphone" size={21} color="#111827" /></Pressable>
+          <Pressable onPress={() => { if (photoUri) { setPhotoUri(null); setAnalysis(null); setAnalysisError(''); } else router.back(); }} style={[styles.voiceCircle, styles.voiceClose]} accessibilityRole="button" accessibilityLabel={photoUri ? 'ถ่ายใหม่' : 'ปิด AI Camera'}><Icon name="close" size={22} color="#FFFFFF" /></Pressable>
         </View>
-        {navigationCue ? <View style={styles.routeCue} accessibilityLiveRegion="polite">
-          <View style={[styles.routeCueIcon, navigationCue.instruction === 'อยู่นอกเส้นทาง' && styles.routeCueIconWarning]}><Icon name={navigationCue.instruction === 'ถึงจุดหมายแล้ว' ? 'check' : navigationCue.instruction === 'อยู่นอกเส้นทาง' ? 'warning' : 'navigation'} size={18} color="#FFFFFF" /></View>
-          <View style={styles.routeCueCopy}><Text style={styles.routeCueTitle}>{navigationCue.instruction}</Text><Text style={styles.routeCueSub}>{navigationCue.instruction === 'ถึงจุดหมายแล้ว' ? 'จบเส้นทางแล้ว' : navigationCue.instruction === 'อยู่นอกเส้นทาง' ? 'กรุณากลับหน้าเส้นทางเพื่อคำนวณใหม่' : `อีก ${formatGuidanceDistance(navigationCue.distanceMeters)} · จากเส้นทางจริง`}</Text></View>
-        </View> : null}
-        <Pressable onPress={() => { if (photoUri && !analyzing) void runAnalysis(photoUri); }} style={[styles.notice, analysis && styles.noticeSuccess, analysisError && styles.noticeError]} accessibilityRole="button" accessibilityLabel="วิเคราะห์ภาพด้วย AI">
-          <View style={styles.noticeIcon}><Icon name={analysis ? 'check' : analysisError ? 'warning' : 'info'} size={17} color="#FFFFFF" /></View>
-          <Text style={styles.noticeText}>{analysisError ? `${analysisError} · แตะเพื่อลองใหม่` : analyzing || liveMode ? (analysis ? formatAnalysis(analysis) : 'กำลังดูภาพจากกล้องและวิเคราะห์ทุก 3.5 วินาที…') : analysis ? formatAnalysis(analysis) : 'ถ่ายภาพแล้วแตะเพื่อวิเคราะห์สิ่งกีดขวางด้วย AI'}</Text>
-        </Pressable>
-        <View style={styles.actions}>
-          <Pressable onPress={() => { if (photoUri) { setPhotoUri(null); setAnalysis(null); setAnalysisError(''); } else router.back(); }} style={styles.primary} accessibilityRole="button"><Icon name="back" size={20} color="#FFFFFF" /><Text style={styles.primaryText}>{photoUri ? 'ถ่ายใหม่' : 'กลับ'}</Text></Pressable>
-          <Pressable onPress={reportPhoto} style={styles.secondary} accessibilityRole="button"><Icon name="flag" size={20} color={colors.forest} /><Text style={styles.secondaryText}>{photoUri ? 'แนบรายงาน' : 'รายงานปัญหา'}</Text></Pressable>
-        </View>
-        <View style={styles.captureRow}>
-          {liveRequested ? <View style={[styles.thumbnail, styles.liveBadge]}><Icon name="navigation" size={18} color={colors.forest} /></View> : <Pressable onPress={() => { void choosePhoto(); }} style={styles.thumbnail} accessibilityRole="button" accessibilityLabel="เลือกภาพจากคลัง">
-            {photoUri ? <Image source={{ uri: photoUri }} style={styles.thumbnailImage} /> : <Icon name="camera" size={18} color="#64748B" />}
-          </Pressable>}
-          <Pressable onPress={() => { if (liveRequested) { toggleLiveMode(); } else if (photoUri) { setPhotoUri(null); setAnalysis(null); setAnalysisError(''); } else void capturePhoto(); }} disabled={busy || !permission?.granted} style={[styles.capture, (!permission?.granted || busy) && styles.captureDisabled]} accessibilityRole="button" accessibilityLabel={liveRequested ? (liveMode ? 'หยุดวิเคราะห์สด' : 'เริ่มวิเคราะห์สด') : photoUri ? 'ล้างภาพที่ถ่าย' : 'ถ่ายภาพ'}>
-            {busy ? <ActivityIndicator color={colors.forest} /> : liveRequested && liveMode ? <View style={styles.liveStopInner} /> : <View style={styles.captureInner} />}
-          </Pressable>
-          <View style={styles.captureSpacer} />
-        </View>
-      </View>
+      </View> : null}
     </View>
   );
 }
@@ -264,16 +242,22 @@ function formatGuidanceDistance(distance: number) {
   return `${(distance / 1_000).toFixed(1)} กิโลเมตร`;
 }
 
-function Metric({ icon, label, value, active }: { icon: 'camera' | 'flashlight' | 'check'; label: string; value: string; active: boolean }) {
-  return <View style={styles.metric}><Icon name={icon} size={21} color={active ? '#16A166' : colors.forest} /><Text style={styles.metricLabel}>{label}</Text><Text style={[styles.metricValue, active && styles.green]}>{value}</Text></View>;
-}
-
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#D6E3EA' },
+  screen: { flex: 1, backgroundColor: '#101722' },
   camera: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
   permissionBackground: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: '#DFEAF0' },
-  tint: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(8,37,70,0.06)' },
-  safe: { flex: 1, paddingHorizontal: 14, paddingTop: 8 },
+  tint: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(8,20,38,0.12)' },
+  safe: { flex: 1, paddingHorizontal: 16, paddingTop: 10 },
+  aiTopControls: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  brandChip: { minHeight: 46, borderRadius: 23, backgroundColor: 'rgba(255,255,255,0.96)', flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 9, paddingVertical: 5, shadowColor: '#000000', shadowOpacity: 0.16, shadowRadius: 10, elevation: 7 },
+  brandMark: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center' },
+  brandTitle: { color: '#173B8F', fontSize: 11, lineHeight: 13, fontWeight: '900' },
+  brandSub: { color: '#7B8CA2', fontSize: 8, lineHeight: 10, fontWeight: '700' },
+  topCircle: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.96)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000000', shadowOpacity: 0.18, shadowRadius: 12, elevation: 7 },
+  topPill: { width: 104, height: 52, borderRadius: 26, paddingHorizontal: 6, backgroundColor: 'rgba(255,255,255,0.96)', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', shadowColor: '#000000', shadowOpacity: 0.18, shadowRadius: 12, elevation: 7 },
+  topPillButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  topPillButtonActive: { backgroundColor: colors.forest },
+  moreButton: { width: 45, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   header: { minHeight: 72, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.96)', flexDirection: 'row', alignItems: 'center', padding: 10, gap: 9, shadowColor: '#0F172A', shadowOpacity: 0.14, shadowRadius: 14, elevation: 6 },
   back: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F172A', shadowOpacity: 0.08, shadowRadius: 8 },
   headerCopy: { flex: 1, gap: 2 }, headerTitle: { color: '#102A72', fontSize: 17, fontWeight: '800' }, headerSub: { color: '#64748B', fontSize: 9 },
@@ -288,7 +272,27 @@ const styles = StyleSheet.create({
   permissionTitle: { color: '#102A72', fontSize: 17, fontWeight: '800' }, permissionSub: { color: '#64748B', fontSize: 11, lineHeight: 16, textAlign: 'center' }, permissionAction: { color: '#FFFFFF', backgroundColor: colors.forest, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, overflow: 'hidden', fontSize: 12, fontWeight: '800', marginTop: 3 },
   sideControls: { marginTop: 17, flexDirection: 'row', justifyContent: 'space-between' }, roundControl: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.96)', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F172A', shadowOpacity: 0.12, shadowRadius: 10, elevation: 4 }, controlActive: { backgroundColor: colors.forest },
   cameraNotice: { position: 'absolute', top: '45%', left: 16, right: 16, padding: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.94)' }, cameraNoticeText: { color: '#B91C1C', fontSize: 10, textAlign: 'center' },
-  sheet: { position: 'absolute', left: 10, right: 10, bottom: 10, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.97)', padding: 14, gap: 11, shadowColor: '#0F172A', shadowOpacity: 0.18, shadowRadius: 18, elevation: 14 },
+  voiceDock: { position: 'absolute', left: 16, right: 16, bottom: 16, gap: 12 },
+  voiceStatus: { minHeight: 38, borderRadius: 19, paddingHorizontal: 13, backgroundColor: 'rgba(255,255,255,0.9)', flexDirection: 'row', alignItems: 'center', gap: 8, shadowColor: '#000000', shadowOpacity: 0.13, shadowRadius: 10, elevation: 6 },
+  voiceStatusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#2563EB' },
+  voiceStatusDotReady: { backgroundColor: '#16A166' },
+  voiceStatusDotWarning: { backgroundColor: '#D97706' },
+  voiceStatusText: { flex: 1, color: '#1E293B', fontSize: 10, fontWeight: '800' },
+  voiceControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 9 },
+  voiceCircle: { width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.97)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000000', shadowOpacity: 0.16, shadowRadius: 10, elevation: 7 },
+  voiceCircleActive: { backgroundColor: '#91D5FF' },
+  voiceClose: { backgroundColor: '#DC2626' },
+  voiceStartButton: { width: 84, height: 84, borderRadius: 42, backgroundColor: '#2563EB', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1, shadowColor: '#000000', shadowOpacity: 0.22, shadowRadius: 11, elevation: 8 },
+  voiceStartButtonActive: { backgroundColor: '#16A166' },
+  voiceStartText: { color: '#FFFFFF', fontSize: 10, fontWeight: '900' },
+  voiceStartTextIdle: { color: '#FFFFFF', fontSize: 16 },
+  voiceWave: { flex: 1, minWidth: 90, maxWidth: 142, height: 58, borderRadius: 29, backgroundColor: '#E7EEF6', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 9, shadowColor: '#000000', shadowOpacity: 0.12, shadowRadius: 10, elevation: 5 },
+  waveBars: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  voiceWaveText: { maxWidth: 58, color: '#2563EB', fontSize: 9, fontWeight: '900' },
+  waveBar: { width: 4, borderRadius: 3, backgroundColor: '#4D95F5' },
+  waveBarShort: { height: 12 },
+  waveBarMedium: { height: 25 },
+  waveBarTall: { height: 37 },
   metrics: { flexDirection: 'row' }, metric: { flex: 1, minWidth: 0, alignItems: 'center', gap: 3, borderRightWidth: 1, borderRightColor: '#E2E8F0' }, metricLabel: { color: '#334E7D', fontSize: 9, textAlign: 'center' }, metricValue: { color: '#102A72', fontSize: 17, fontWeight: '800' }, green: { color: '#16A166' },
   routeCue: { minHeight: 48, borderRadius: 15, backgroundColor: '#E8F8F0', flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 10 }, routeCueIcon: { width: 30, height: 30, borderRadius: 15, backgroundColor: colors.forest, alignItems: 'center', justifyContent: 'center' }, routeCueIconWarning: { backgroundColor: '#D97706' }, routeCueCopy: { flex: 1, gap: 2 }, routeCueTitle: { color: '#102A72', fontSize: 13, fontWeight: '800' }, routeCueSub: { color: '#16734C', fontSize: 10, fontWeight: '700' },
   notice: { minHeight: 46, borderRadius: 15, backgroundColor: '#EAF2FF', flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 10 }, noticeSuccess: { backgroundColor: '#E8F8F0' }, noticeError: { backgroundColor: '#FFF7E6' }, noticeIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.forest, alignItems: 'center', justifyContent: 'center' }, noticeText: { flex: 1, color: '#1E3A8A', fontSize: 10, lineHeight: 15 },

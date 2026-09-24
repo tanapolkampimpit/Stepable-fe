@@ -16,6 +16,9 @@ type OpenStreetMapProps = {
 };
 type MapMessage = { source?: string; type?: string; latitude?: number; longitude?: number };
 
+const MAP_TILE_URL = process.env.EXPO_PUBLIC_MAP_TILE_URL?.trim() || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const MAP_ATTRIBUTION = process.env.EXPO_PUBLIC_MAP_ATTRIBUTION?.trim() || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
+
 const iframeStyle: CSSProperties = { width: '100%', height: '100%', border: 0, display: 'block', background: '#E8EEF2' };
 
 export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>(function OpenStreetMap(
@@ -118,7 +121,7 @@ function createMapDocument() {
     const send=(message)=>window.parent.postMessage({source:'stepable-map',...message},'*');
     if(!window.L){document.body.insertAdjacentHTML('beforeend','<div class="map-error">โหลดเครื่องมือแผนที่ไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วลองใหม่</div>');send({type:'error'});return;}
     const map=L.map('map',{zoomControl:false,preferCanvas:true,zoomSnap:.5,minZoom:3,maxZoom:19}).setView([0,0],3);
-    const tiles=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,updateWhenIdle:true,updateWhenZooming:false,keepBuffer:1,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>'}).addTo(map);
+    const tiles=L.tileLayer('${MAP_TILE_URL}',{maxZoom:19,updateWhenIdle:true,updateWhenZooming:false,keepBuffer:1,attribution:'${MAP_ATTRIBUTION}'}).addTo(map);
     let userMarker=null,destinationMarker=null,routeLine=null,otherMarkers=[];
     const userIcon=L.divIcon({className:'',html:'<div class="stepable-pin"></div>',iconSize:[22,22],iconAnchor:[11,11]});
     const destinationIcon=L.divIcon({className:'',html:'<div class="stepable-destination"></div>',iconSize:[29,29],iconAnchor:[14,22]});

@@ -16,7 +16,7 @@ export type AiAnalysis = {
   obstacles: AiDetection[];
 };
 
-function apiUrl() {
+export function getAiApiUrl() {
   const value = process.env.EXPO_PUBLIC_AI_API_URL?.trim().replace(/\/$/, '');
   if (!value) throw new Error('ยังไม่ได้ตั้งค่า EXPO_PUBLIC_AI_API_URL สำหรับ AI server');
   if (value.includes('YOUR_LAN_IP')) throw new Error('กรุณาแทน YOUR_LAN_IP ด้วย IP ของคอมพิวเตอร์ที่รัน AI server');
@@ -24,7 +24,7 @@ function apiUrl() {
 }
 
 export async function analyzeImage(uri: string): Promise<AiAnalysis> {
-  const endpoint = apiUrl();
+  const endpoint = getAiApiUrl();
   const body = new FormData();
   if (Platform.OS === 'web') {
     const response = await fetch(uri);

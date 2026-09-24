@@ -42,7 +42,14 @@ export type IconName =
   | 'flag'
   | 'info'
   | 'walk'
+  | 'crosswalk'
+  | 'park'
   | 'flashlight'
+  | 'refresh'
+  | 'upload'
+  | 'more'
+  | 'play'
+  | 'pause'
   | 'close';
 
 const paths: Record<IconName, string[]> = {
@@ -87,7 +94,14 @@ const paths: Record<IconName, string[]> = {
   flag: ['M5 22V4', 'M5 4h12l-2 4 2 4H5'],
   info: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z', 'M12 10v7', 'M12 7h.01'],
   walk: ['M13 5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z', 'm10 22 2-7 3 3v4', 'm7 22 2-8-3-3', 'm9 8 4 3 4-1'],
+  crosswalk: ['M12 5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z', 'm9 22 2-7 3 3v4', 'm6 22 3-8-3-3', 'm9 8 4 3 4-1', 'M2 4h4', 'M18 4h4', 'M2 20h3', 'M19 20h3'],
+  park: ['M12 2 7 9h3l-5 7h6v6h2v-6h6l-5-7h3l-5-7Z'],
   flashlight: ['m9 2 6 0 1 5-8 0Z', 'M8 7h8l-1 15H9Z', 'M12 11v6'],
+  refresh: ['M20 11a8 8 0 0 0-14.7-4L3 10', 'M3 4v6h6', 'M4 13a8 8 0 0 0 14.7 4L21 14', 'M21 20v-6h-6'],
+  upload: ['M12 16V4', 'm7 9 5-5 5 5', 'M4 20h16'],
+  more: ['M5 12h.01', 'M12 12h.01', 'M19 12h.01'],
+  play: ['m8 5 11 7-11 7Z'],
+  pause: ['M8 5v14', 'M16 5v14'],
   close: ['M18 6 6 18', 'm6 6 12 12'],
 };
 
