@@ -1,6 +1,6 @@
 import { StyleSheet, View } from 'react-native';
-import { AppText as Text } from './AppText';
-import { colors } from '../theme';
+import { AppText as Text } from '../ui/AppText';
+import { colors } from '../../theme';
 
 type PageHeaderProps = { eyebrow?: string; title: string; subtitle?: string };
 

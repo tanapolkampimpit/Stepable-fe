@@ -1,6 +1,6 @@
 import { useMemo, type ComponentProps } from 'react';
 import { StyleSheet, Text as NativeText, type TextStyle } from 'react-native';
-import { useAppData } from './AppDataContext';
+import { useAppData } from '../../providers/app-data';
 
 type AppTextProps = ComponentProps<typeof NativeText>;
 

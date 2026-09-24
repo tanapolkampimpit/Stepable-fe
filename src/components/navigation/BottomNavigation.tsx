@@ -9,8 +9,8 @@ import {
   View,
 } from 'react-native';
 import { Tabs } from 'expo-router';
-import { Icon, type IconName } from '../Icon';
-import { AppText as Text } from '../AppText';
+import { Icon, type IconName } from '../ui/Icon';
+import { AppText as Text } from '../ui/AppText';
 import { useBottomNavigation } from './BottomNavigationContext';
 
 const PRIMARY = '#2563EB';
