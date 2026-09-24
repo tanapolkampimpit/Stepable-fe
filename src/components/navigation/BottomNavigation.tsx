@@ -1,3 +1,4 @@
+import { t, useLanguage } from '../../i18n';
 import { type ComponentProps, useEffect, useState } from 'react';
 import {
   AccessibilityInfo,
@@ -17,15 +18,15 @@ const PRIMARY = '#2563EB';
 const INACTIVE = '#64748B';
 type BottomTabBarProps = Parameters<NonNullable<ComponentProps<typeof Tabs>['tabBar']>>[0];
 
-const tabMeta: Record<string, { label: string; icon: IconName }> = {
-  index: { label: 'แผนที่', icon: 'map' },
-  search: { label: 'ค้นหา', icon: 'search' },
-  ai: { label: 'AI', icon: 'sparkles' },
-  alerts: { label: 'แจ้งเตือน', icon: 'bell' },
-  profile: { label: 'โปรไฟล์', icon: 'user' },
-};
-
 export function BottomNavigation({ state, descriptors, navigation, insets }: BottomTabBarProps) {
+  const tabMeta: Record<string, { label: string; icon: IconName }> = {
+    index: { label: t('common.map'), icon: 'map' },
+    search: { label: t('common.search'), icon: 'search' },
+    ai: { label: 'AI', icon: 'sparkles' },
+    alerts: { label: t('common.alerts'), icon: 'bell' },
+    profile: { label: t('common.profile'), icon: 'user' },
+  };
+  useLanguage();
   const { compact } = useBottomNavigation();
   const [progress] = useState(() => new Animated.Value(compact ? 1 : 0));
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -97,6 +98,7 @@ export function BottomNavigation({ state, descriptors, navigation, insets }: Bot
 }
 
 function AiIcon({ progress }: { progress: Animated.Value }) {
+  useLanguage();
   const expandedOpacity = progress.interpolate({ inputRange: [0, 0.72, 1], outputRange: [1, 0, 0] });
   const compactOpacity = progress.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 0, 1] });
   const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] });

@@ -1,3 +1,5 @@
+import { issueTypes, severities, issueLabel, severityLabel } from '../../i18n/reports';
+import { t, useLanguage, useMessageState, message } from '../../i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -8,18 +10,17 @@ import { PageHeader } from '../../components/layout/PageHeader';
 import { Screen } from '../../components/layout/Screen';
 import { useAppData } from '../../providers/app-data';
 import { distanceMeters, reverseGeocodeOsm, type Coordinates } from '../../services/geo';
+import { submitReport as apiSubmitReport, uploadReportPhoto, thaiToCategory, thaiToSeverity } from '../../services/api';
 import { colors } from '../../theme';
 
-const issueTypes = ['ทางเท้าชำรุด', 'สิ่งกีดขวาง', 'ทางมืด', 'ไม่มีทางลาด', 'ฝาท่อชำรุด', 'ทางม้าลายอันตราย'];
-const severities = ['ต่ำ', 'ปานกลาง', 'สูง'] as const;
-
 export default function ReportIssuePage() {
+  useLanguage();
   const { lat, lon, image } = useLocalSearchParams<{ lat?: string; lon?: string; image?: string }>();
-  const { location, placeLabel, locationMessage, isLocating, refreshLocation, addReport } = useAppData();
-  const [issue, setIssue] = useState(issueTypes[0]);
-  const [severity, setSeverity] = useState<(typeof severities)[number]>('ปานกลาง');
+  const { location, placeLabel, locationMessage, isLocating, refreshLocation, addReport, refreshReports } = useAppData();
+  const [issue, setIssue] = useState<(typeof issueTypes)[number]>(issueTypes[0]);
+  const [severity, setSeverity] = useState<(typeof severities)[number]>('medium');
   const [description, setDescription] = useState('');
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useMessageState('');
   const [busy, setBusy] = useState(false);
   const [imageUri, setImageUri] = useState<string | null>(typeof image === 'string' ? image : null);
   const [coordinateOverride, setCoordinateOverride] = useState<Coordinates | null>(null);
@@ -57,7 +58,7 @@ export default function ReportIssuePage() {
     if (fresh) {
       setCoordinateOverride(fresh);
     } else {
-      setNotice(locationMessage || 'อ่าน GPS ไม่ได้ โปรดเปิด Location แล้วลองอีกครั้ง');
+      setNotice(locationMessage || t('reportissue.couldNotReadGpsEnableLocationAnd'));
     }
   };
 
@@ -69,23 +70,66 @@ export default function ReportIssuePage() {
         setNotice('');
       }
     } catch {
-      setNotice('เปิดคลังรูปไม่ได้ กรุณาลองอีกครั้ง');
+      setNotice(message('reportissue.couldNotOpenThePhotoLibraryTry'));
     }
   };
 
   const submitReport = async () => {
     if (!coordinates) {
-      setNotice('ต้องเปิด GPS และรับตำแหน่งจริงก่อนส่งรายงาน');
+      setNotice(message('reportissue.enableGpsAndObtainYourLocationBefore'));
       return;
     }
     setBusy(true);
     setNotice('');
     try {
-      await addReport({ type: issue, severity, description: description.trim(), coordinates, ...(imageUri ? { imageUri } : {}) });
-      Alert.alert('บันทึกรายงานแล้ว', 'รายงานถูกบันทึกไว้ในอุปกรณ์นี้ แต่ยังไม่ได้ส่งไปยังเซิร์ฟเวอร์หรือผู้ใช้อื่น');
+      let uploadedPhotoUrl: string | null = null;
+      if (imageUri) {
+        setNotice('กำลังอัปโหลดรูปภาพไปยังเซิร์ฟเวอร์ StepAble…');
+        try {
+          const uploadRes = await uploadReportPhoto(imageUri);
+          uploadedPhotoUrl = uploadRes.publicUrl;
+        } catch (uploadErr) {
+          console.warn('Upload photo failed, continuing without photo URL:', uploadErr);
+        }
+      }
+
+      setNotice('กำลังส่งรายงานปัญหาไปยัง StepAble API…');
+      let serverReportId: string | undefined;
+      try {
+        const created = await apiSubmitReport({
+          category: thaiToCategory(issue),
+          severity: thaiToSeverity(severity),
+          title: issueLabel(issue),
+          description: description.trim() || undefined,
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude,
+          photoUrl: uploadedPhotoUrl,
+        });
+        serverReportId = created.id;
+      } catch (apiErr) {
+        console.warn('Backend submit failed, saving locally:', apiErr);
+      }
+
+      await addReport({
+        type: issue,
+        severity,
+        description: description.trim(),
+        coordinates,
+        ...(uploadedPhotoUrl || imageUri ? { imageUri: (uploadedPhotoUrl || imageUri) as string } : {}),
+        status: serverReportId ? 'submitted' : undefined,
+      });
+
+      void refreshReports();
+
+      Alert.alert(
+        'ส่งรายงานปัญหาสำเร็จ',
+        serverReportId
+          ? 'ข้อมูลปัญหาถูกส่งไปยัง StepAble API เรียบร้อยแล้ว ขอบคุณที่ร่วมพัฒนาทางเท้าศรีราชา'
+          : 'บันทึกรายงานในอุปกรณ์เรียบร้อยแล้ว (ออฟไลน์)',
+      );
       router.replace('/(tabs)/alerts');
     } catch {
-      setNotice('บันทึกรายงานไม่สำเร็จ พื้นที่จัดเก็บอาจเต็ม ลองอีกครั้ง');
+      setNotice('บันทึกรายงานไม่สำเร็จ โปรดลองอีกครั้ง');
     } finally {
       setBusy(false);
     }
@@ -96,33 +140,54 @@ export default function ReportIssuePage() {
 
   return (
     <Screen>
-      <Pressable onPress={() => router.back()} style={styles.back} accessibilityRole="button"><Icon name="back" size={19} color={colors.ink} /><Text style={styles.backText}>กลับ</Text></Pressable>
-      <PageHeader eyebrow="ร่วมกันทำให้ทางเท้าดีขึ้น" title="รายงานปัญหา" subtitle="ระบุตำแหน่งและรายละเอียดเท่าที่สะดวก" />
+      <Pressable onPress={() => router.back()} style={styles.back} accessibilityRole="button"><Icon name="back" size={19} color={colors.ink} /><Text style={styles.backText}>{t('reportissue.back')}</Text></Pressable>
+      <PageHeader eyebrow={t('reportissue.helpImproveOurSidewalks')} title={t('ai.reportAnIssue')} subtitle={t('reportissue.addALocationAndAnyDetailsYou')} />
       <View style={styles.locationCard}>
         <View style={styles.locationIcon}><Icon name="pin" size={19} color={colors.forest} /></View>
         <View style={styles.locationCopy}>
-          <Text numberOfLines={1} style={styles.locationTitle}>{coordinates ? (place || 'ตำแหน่ง GPS จริง') : 'ยังไม่มีตำแหน่ง GPS'}</Text>
-          <Text style={styles.locationSub}>{coordinates ? `${coordinates.latitude.toFixed(5)}, ${coordinates.longitude.toFixed(5)}` : 'ต้องอนุญาตตำแหน่งขณะใช้แอป'}</Text>
+          <Text numberOfLines={1} style={styles.locationTitle}>{coordinates ? (place || t('reportissue.gpsLocation')) : t('reportissue.noGpsLocationYet')}</Text>
+          <Text style={styles.locationSub}>{coordinates ? `${coordinates.latitude.toFixed(5)}, ${coordinates.longitude.toFixed(5)}` : t('reportissue.allowLocationAccessWhileUsingTheApp')}</Text>
         </View>
-        <Pressable onPress={() => { void updateLocation(); }} style={styles.refreshButton} accessibilityRole="button" accessibilityLabel="อัปเดตตำแหน่ง GPS">
-          {isLocating ? <ActivityIndicator size="small" color={colors.forest} /> : <Text style={styles.edit}>อัปเดต</Text>}
+        <Pressable onPress={() => { void updateLocation(); }} style={styles.refreshButton} accessibilityRole="button" accessibilityLabel={t('reportissue.updateGpsLocation')}>
+          {isLocating ? <ActivityIndicator size="small" color={colors.forest} /> : <Text style={styles.edit}>{t('reportissue.update')}</Text>}
         </Pressable>
       </View>
       {!coordinates ? <Text style={styles.gpsHint}>{locationMessage}</Text> : null}
-      <Text style={styles.label}>ประเภทปัญหา</Text>
+      <Text style={styles.label}>{t('reportissue.issueType')}</Text>
       <View style={styles.options}>
-        {issueTypes.map((item) => <Pressable key={item} onPress={() => setIssue(item)} accessibilityRole="button" accessibilityState={{ selected: issue === item }} style={[styles.option, issue === item && styles.optionActive]}><Text style={[styles.optionText, issue === item && styles.optionTextActive]}>{item}</Text></Pressable>)}
+        {issueTypes.map((item) => (
+          <Pressable key={item} onPress={() => setIssue(item)} accessibilityRole="button" accessibilityState={{ selected: issue === item }} style={[styles.option, issue === item && styles.optionActive]}>
+            <Text style={[styles.optionText, issue === item && styles.optionTextActive]}>{issueLabel(item)}</Text>
+          </Pressable>
+        ))}
       </View>
-      <Text style={styles.label}>ความรุนแรง</Text>
-      <View style={styles.severityRow}>{severities.map((item) => <Pressable key={item} onPress={() => setSeverity(item)} accessibilityRole="button" accessibilityState={{ selected: severity === item }} style={[styles.severity, severity === item && styles.severityActive]}><Text style={[styles.severityText, severity === item && styles.severityTextActive]}>{item}</Text></Pressable>)}</View>
-      <Text style={styles.label}>รายละเอียดเพิ่มเติม <Text style={styles.optional}>(ไม่บังคับ)</Text></Text>
-      <TextInput value={description} onChangeText={setDescription} multiline numberOfLines={4} textAlignVertical="top" placeholder="เช่น ทางเท้าขรุขระตรงหน้าป้ายรถเมล์" placeholderTextColor="#94A3B8" style={styles.description} accessibilityLabel="รายละเอียดปัญหา" />
-      {imageUri ? <View style={styles.photoPreviewWrap}><Image source={{ uri: imageUri }} style={styles.photoPreview} resizeMode="cover" /><Pressable onPress={() => setImageUri(null)} style={styles.removePhoto} accessibilityRole="button" accessibilityLabel="นำรูปออก"><Icon name="close" size={17} color="#FFFFFF" /></Pressable></View> : null}
-      <Pressable onPress={() => { void choosePhoto(); }} style={styles.photoButton} accessibilityRole="button"><Icon name="camera" size={18} color={colors.forest} /><Text style={styles.photoText}>{imageUri ? 'เปลี่ยนรูปภาพ' : 'แนบรูปภาพจากคลัง'}</Text><Icon name="chevron-right" size={17} color={colors.muted} /></Pressable>
+      <Text style={styles.label}>{t('reportissue.severity')}</Text>
+      <View style={styles.severityRow}>
+        {severities.map((item) => (
+          <Pressable key={item} onPress={() => setSeverity(item)} accessibilityRole="button" accessibilityState={{ selected: severity === item }} style={[styles.severity, severity === item && styles.severityActive]}>
+            <Text style={[styles.severityText, severity === item && styles.severityTextActive]}>{severityLabel(item)}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={styles.label}>{t('reportissue.additionalDetails')}<Text style={styles.optional}>{t('reportissue.optional')}</Text></Text>
+      <TextInput value={description} onChangeText={setDescription} multiline numberOfLines={4} textAlignVertical="top" placeholder={t('reportissue.forExampleUnevenPavementInFrontOf')} placeholderTextColor="#94A3B8" style={styles.description} accessibilityLabel={t('reportissue.issueDetails')} />
+      {imageUri ? (
+        <View style={styles.photoPreviewWrap}>
+          <Image source={{ uri: imageUri }} style={styles.photoPreview} resizeMode="cover" />
+          <Pressable onPress={() => setImageUri(null)} style={styles.removePhoto} accessibilityRole="button" accessibilityLabel={t('reportissue.removePhoto')}>
+            <Icon name="close" size={17} color="#FFFFFF" />
+          </Pressable>
+        </View>
+      ) : null}
+      <Pressable onPress={() => { void choosePhoto(); }} style={styles.photoButton} accessibilityRole="button">
+        <Icon name="camera" size={18} color={colors.forest} />
+        <Text style={styles.photoText}>{imageUri ? t('reportissue.changePhoto') : t('reportissue.attachAPhotoFromYourLibrary')}</Text>
+        <Icon name="chevron-right" size={17} color={colors.muted} />
+      </Pressable>
       {notice ? <View style={styles.notice}><Icon name="warning" size={17} color={colors.amber} /><Text style={styles.noticeText}>{notice}</Text></View> : null}
-      <View style={styles.warning}><Icon name="info" size={17} color={colors.forest} /><Text style={styles.warningText}>บันทึกไว้ในอุปกรณ์นี้เท่านั้น ยังไม่มีเซิร์ฟเวอร์กลางสำหรับส่งรายงานให้ผู้ใช้อื่น</Text></View>
+      <View style={styles.warning}><Icon name="info" size={17} color={colors.forest} /><Text style={styles.warningText}>ข้อมูลรายงานจะถูกส่งไปยัง StepAble API เพื่อการตรวจสอบและปรับปรุงทางเท้าในพื้นที่</Text></View>
       <Pressable onPress={() => { void submitReport(); }} disabled={busy || !coordinates} style={[styles.submit, (!coordinates || busy) && styles.submitDisabled]} accessibilityRole="button" accessibilityState={{ disabled: busy || !coordinates }}>
-        {busy ? <ActivityIndicator color={colors.paper} /> : <Text style={styles.submitText}>บันทึกรายงาน</Text>}
+        {busy ? <ActivityIndicator color={colors.paper} /> : <Text style={styles.submitText}>ส่งรายงานปัญหา</Text>}
         {!busy ? <Icon name="arrow-right" size={18} color={colors.paper} /> : null}
       </Pressable>
     </Screen>

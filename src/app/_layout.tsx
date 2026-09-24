@@ -1,3 +1,4 @@
+import { LanguageProvider } from '../i18n';
 import { useEffect } from 'react';
 import { SplashScreen, Stack } from 'expo-router';
 import { useFonts } from 'expo-font';
@@ -29,6 +30,7 @@ export default function RootLayout() {
   if (!fontsLoaded && !fontError) return null;
 
   return (
+    <LanguageProvider>
     <BottomNavigationProvider>
       <AppDataProvider>
         <Stack screenOptions={{ headerShown: false }}>
@@ -38,5 +40,6 @@ export default function RootLayout() {
         </Stack>
       </AppDataProvider>
     </BottomNavigationProvider>
+    </LanguageProvider>
   );
 }

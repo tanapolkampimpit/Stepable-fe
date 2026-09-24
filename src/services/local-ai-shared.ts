@@ -1,4 +1,5 @@
 import type { AiAnalysis, AiDetection } from './ai';
+import { aiResultLabels } from '../i18n/detections';
 
 export const IMAGE_WIDTH = 512;
 export const IMAGE_HEIGHT = 288;
@@ -59,8 +60,8 @@ export function decodeAnalysis(logits: Float32Array, original: { width: number; 
     obstacles.push({
       className,
       confidence: Number(confidence.toFixed(3)),
-      position: centerX < 0.35 ? 'ซ้าย' : centerX > 0.65 ? 'ขวา' : 'ตรงหน้า',
-      distanceBand: bottomRatio > 0.82 || areaRatio > 0.18 ? 'ใกล้' : 'ข้างหน้า',
+      position: centerX < 0.35 ? aiResultLabels.position.left : centerX > 0.65 ? aiResultLabels.position.right : aiResultLabels.position.ahead,
+      distanceBand: bottomRatio > 0.82 || areaRatio > 0.18 ? aiResultLabels.distance.near : aiResultLabels.distance.fartherAhead,
       bbox: { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) },
     });
   }

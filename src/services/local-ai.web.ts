@@ -5,6 +5,7 @@ import jpeg from 'jpeg-js';
 import { Image } from 'react-native';
 import type { AiAnalysis } from './ai';
 import { decodeAnalysis, IMAGE_HEIGHT, IMAGE_WIDTH } from './local-ai-shared';
+import { localAiError, throwLocalAiError } from './local-ai-errors';
 
 import modelAsset from '../../assets/models/stepable-unet3plus.int8.onnx';
 import wasmAsset from '../../assets/models/ort-wasm-simd-threaded.wasm';
@@ -28,15 +29,15 @@ let sessionPromise: Promise<ModelSession> | null = null;
 let ortPromise: Promise<OrtModule> | null = null;
 
 function getOrt(): Promise<OrtModule> {
-  if (typeof window === 'undefined') return Promise.reject(new Error('ONNX Runtime Web ใช้ได้เฉพาะบนเบราว์เซอร์'));
+  if (typeof window === 'undefined') return Promise.reject(localAiError('runtime_unavailable'));
   if (window.ort) return Promise.resolve(window.ort);
   if (!ortPromise) {
     ortPromise = new Promise<OrtModule>((resolve, reject) => {
       const script = document.createElement('script');
       script.src = new URL('ort.wasm.min.js', document.baseURI).toString();
       script.async = true;
-      script.onload = () => window.ort ? resolve(window.ort) : reject(new Error('โหลด ONNX Runtime Web ไม่สำเร็จ'));
-      script.onerror = () => reject(new Error('โหลด ONNX Runtime Web ไม่สำเร็จ'));
+      script.onload = () => window.ort ? resolve(window.ort) : reject(localAiError('runtime_unavailable'));
+      script.onerror = () => reject(localAiError('runtime_unavailable'));
       document.head.appendChild(script);
     }).catch((error) => {
       ortPromise = null;
@@ -56,7 +57,7 @@ async function assetUri(moduleId: number): Promise<string> {
   const asset = Asset.fromModule(moduleId);
   await asset.downloadAsync();
   const uri = asset.localUri ?? asset.uri;
-  if (!uri) throw new Error('ไม่พบไฟล์ AI ในเว็บแอป');
+  if (!uri) throwLocalAiError('model_unavailable');
   return uri;
 }
 
@@ -67,7 +68,7 @@ async function getSession(): Promise<ModelSession> {
       const modelUri = await assetUri(modelAsset);
       const wasmUri = await assetUri(wasmAsset);
       const [modelResponse, wasmResponse] = await Promise.all([fetch(modelUri), fetch(wasmUri)]);
-      if (!modelResponse.ok || !wasmResponse.ok) throw new Error('โหลดไฟล์โมเดล AI บนเว็บไม่สำเร็จ');
+      if (!modelResponse.ok || !wasmResponse.ok) throwLocalAiError('model_unavailable');
       ort.env.wasm.numThreads = 1;
       ort.env.wasm.wasmBinary = await wasmResponse.arrayBuffer();
       return ort.InferenceSession.create(await modelResponse.arrayBuffer(), {
@@ -89,9 +90,9 @@ async function imageToTensor(uri: string, ort: OrtModule): Promise<{ tensor: Ort
     [{ resize: { width: IMAGE_WIDTH, height: IMAGE_HEIGHT } }],
     { compress: 1, format: SaveFormat.JPEG, base64: true },
   );
-  if (!resized.base64) throw new Error('แปลงภาพสำหรับ AI ไม่สำเร็จ');
+  if (!resized.base64) throwLocalAiError('image_preparation_failed');
   const decoded = jpeg.decode(toByteArray(resized.base64), { useTArray: true });
-  if (decoded.width !== IMAGE_WIDTH || decoded.height !== IMAGE_HEIGHT) throw new Error('ขนาดภาพสำหรับ AI ไม่ถูกต้อง');
+  if (decoded.width !== IMAGE_WIDTH || decoded.height !== IMAGE_HEIGHT) throwLocalAiError('image_dimensions_invalid');
 
   const pixels = IMAGE_WIDTH * IMAGE_HEIGHT;
   const values = new Float32Array(3 * pixels);
@@ -110,6 +111,6 @@ export async function analyzeImageLocally(uri: string): Promise<AiAnalysis> {
   const { tensor, original } = await imageToTensor(uri, ort);
   const output = await session.run({ image: tensor });
   const logits = output.logits?.data;
-  if (!(logits instanceof Float32Array)) throw new Error('โมเดล AI บนเว็บส่งผลลัพธ์ไม่ถูกต้อง');
+  if (!(logits instanceof Float32Array)) throwLocalAiError('invalid_model_output');
   return decodeAnalysis(logits, original);
 }
