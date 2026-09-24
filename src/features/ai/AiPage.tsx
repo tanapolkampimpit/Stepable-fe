@@ -1,4 +1,4 @@
-import { detectionDistance, detectionPosition } from '../../i18n/detections';
+import { aiResultLabels, detectionDistance, detectionPosition } from '../../i18n/detections';
 import { errorMessage, t, useLanguage, useMessageState } from '../../i18n';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, PanResponder, Pressable, Share, StyleSheet, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
@@ -10,7 +10,7 @@ import { Icon } from '../../components/ui/Icon';
 import { AppText as Text } from '../../components/ui/AppText';
 import { OpenStreetMap, type OpenStreetMapHandle } from '../../components/maps/OpenStreetMap';
 import { useAppData } from '../../providers/app-data';
-import { analyzeImage, type AiAnalysis } from '../../services/ai';
+import { analyzeImage, type AiAnalysis, type AiDetection } from '../../services/ai';
 import { distanceBetweenRouteIndices, distanceMeters, getManeuverInstruction, getRouteProgress } from '../../services/geo';
 import { colors } from '../../theme';
 
@@ -59,6 +59,7 @@ export default function AiPage() {
   const lastAnnouncement = useRef('');
   const lastRouteAnnouncement = useRef('');
   const navigationCueRef = useRef<NavigationCue | null>(null);
+  const lastAlertAt = useRef(0);
   const miniMapGeometryRef = useRef<{ position: MiniMapPosition | null; scale: number }>({ position: null, scale: 1 });
   const miniMapGestureStart = useRef<{ left: number; top: number; scale: number; distance: number }>({ left: 0, top: 0, scale: 1, distance: 0 });
   const [miniMapPosition, setMiniMapPosition] = useState<MiniMapPosition | null>(null);
@@ -203,9 +204,12 @@ export default function AiPage() {
         if (!active) return;
         setAnalysis(result);
         setAnalysisError('');
-        const announcement = liveAnnouncement(result);
-        if (!navigationCueRef.current && announcement && announcement !== lastAnnouncement.current) {
-          lastAnnouncement.current = announcement;
+        const urgent = hasImmediateHazard(result);
+        const announcement = liveAnnouncement(result, facing === 'back');
+        const announcementKey = `${result.obstacles.slice(0, 2).map((item) => `${item.className}:${item.position}:${item.distanceBand}`).join('|')}:${result.visualSide}`;
+        if ((!navigationCueRef.current || urgent) && announcement && (announcementKey !== lastAnnouncement.current || (urgent && Date.now() - lastAlertAt.current > 10000))) {
+          lastAnnouncement.current = announcementKey;
+          lastAlertAt.current = Date.now();
           Speech.stop();
           Speech.speak(announcement, { language: locale, rate: 0.95 });
         }
@@ -223,7 +227,7 @@ export default function AiPage() {
       liveBusy.current = false;
       Speech.stop();
     };
-  }, [liveMode, permission?.granted, photoUri, locale, setAnalysisError]);
+  }, [liveMode, permission?.granted, photoUri, locale, facing, setAnalysisError]);
 
   useEffect(() => {
     if (!liveMode || !navigationCue) {
@@ -233,6 +237,7 @@ export default function AiPage() {
     const bucket = routeAnnouncementBucket(navigationCue.distanceMeters);
     const key = `${locale}:${navigationCue.key}:${bucket}`;
     if (key === lastRouteAnnouncement.current) return;
+    if (analysis && hasImmediateHazard(analysis)) return;
     lastRouteAnnouncement.current = key;
     const spoken = navigationCue.key === 'destination'
       ? navigationCue.instruction
@@ -241,15 +246,16 @@ export default function AiPage() {
         : t('ai.in', { value0: formatGuidanceDistance(navigationCue.distanceMeters), value1: navigationCue.instruction });
     Speech.stop();
     Speech.speak(spoken, { language: locale, rate: 0.92 });
-  }, [liveMode, navigationCue, locale]);
+  }, [liveMode, navigationCue, locale, analysis]);
 
   const reportPhoto = () => {
     router.push({ pathname: '/report-issue', params: { ...(location ? { lat: String(location.latitude), lon: String(location.longitude) } : {}), ...(photoUri ? { image: photoUri } : {}) } });
   };
 
   const speakCurrent = () => {
-    const message = navigationCue?.instruction
-      ?? (analysis ? liveAnnouncement(analysis) : t('ai.analyzingTheImagePleaseWait'));
+    const message = analysis && hasImmediateHazard(analysis)
+      ? liveAnnouncement(analysis, facing === 'back')
+      : navigationCue?.instruction ?? (analysis ? liveAnnouncement(analysis, facing === 'back') : t('ai.analyzingTheImagePleaseWait'));
     Speech.stop();
     Speech.speak(message, { language: locale, rate: 0.92 });
   };
@@ -349,11 +355,11 @@ export default function AiPage() {
 
       {permission?.granted ? <View style={styles.voiceDock}>
         {navigationCue ? <View style={styles.voiceStatus} accessibilityLiveRegion="polite">
-          <View style={[styles.voiceStatusDot, navigationCue.instruction === t('ai.offRoute') && styles.voiceStatusDotWarning]} />
-          <Text numberOfLines={1} style={styles.voiceStatusText}>{navigationCue.instruction} · {formatGuidanceDistance(navigationCue.distanceMeters)}</Text>
+          <View style={[styles.voiceStatusDot, ((analysis && hasImmediateHazard(analysis)) || navigationCue.instruction === t('ai.offRoute')) && styles.voiceStatusDotWarning]} />
+          <Text numberOfLines={2} style={styles.voiceStatusText}>{analysis && hasImmediateHazard(analysis) ? liveAnnouncement(analysis, facing === 'back') : `${navigationCue.instruction} · ${formatGuidanceDistance(navigationCue.distanceMeters)}`}</Text>
         </View> : analysis || analysisError ? <Pressable onPress={() => { if (photoUri && !analyzing) void runAnalysis(photoUri); }} style={styles.voiceStatus} accessibilityRole="button" accessibilityLabel={t('ai.analyzeImageWithAi')}>
           <View style={[styles.voiceStatusDot, analysisError && styles.voiceStatusDotWarning]} />
-          <Text numberOfLines={1} style={styles.voiceStatusText}>{analysisError || (analyzing ? t('ai.analyzingImage') : formatAnalysis(analysis as AiAnalysis))}</Text>
+          <Text numberOfLines={2} style={styles.voiceStatusText}>{analysisError || (analyzing ? t('ai.analyzingImage') : liveAnnouncement(analysis as AiAnalysis, facing === 'back'))}</Text>
         </Pressable> : <View style={styles.voiceStatus} accessibilityLiveRegion="polite">
           <View style={[styles.voiceStatusDot, styles.voiceStatusDotReady]} />
           <Text numberOfLines={1} style={styles.voiceStatusText}>{t(liveMode ? 'ai.waitingForAiAnalysis' : 'ai.tapAiToStartDetection')}</Text>
@@ -381,15 +387,32 @@ function getAiClassLabels(): Record<string, string> { return {
 }; }
 
 function formatAnalysis(result: AiAnalysis) {
-  const labels = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} · ${detectionPosition(item.position)} · ${detectionDistance(item.distanceBand)}`))];
+  const labels = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} · ${detectionPosition(item.position)} · ${formatObstacleDistance(item)}`))];
   const detected = labels.length ? ` (${labels.join(', ')})` : '';
-  return t('ai.obstaclesDetectedWalkwayCoverage', { value0: result.obstacles.length, value1: detected, value2: Math.round(result.sidewalkCoverage * 100) });
+  return `${t('ai.obstaclesDetectedWalkwayCoverage', { value0: result.obstacles.length, value1: detected, value2: Math.round(result.sidewalkCoverage * 100) })}. ${liveAnnouncement(result)}`;
 }
 
-function liveAnnouncement(result: AiAnalysis) {
+function hasImmediateHazard(result: AiAnalysis) {
+  return result.obstacles.some((item) => item.distanceBand === aiResultLabels.distance.near);
+}
+
+function formatObstacleDistance(item: AiDetection) {
+  return item.distanceMeters == null ? detectionDistance(item.distanceBand) : t('ai.approxMeters', { value0: item.distanceMeters });
+}
+
+function liveAnnouncement(result: AiAnalysis, allowVisualSide = false) {
   if (!result.obstacles.length) return t('ai.noObstaclesDetectedAhead');
-  const items = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} ${detectionPosition(item.position)} ${detectionDistance(item.distanceBand)}`))];
-  return t('ai.watchOut', { value0: items.join(t('ai.and')) });
+  const items = [...new Set(result.obstacles.slice(0, 2).map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} ${detectionPosition(item.position)} ${formatObstacleDistance(item)}`))];
+  const warning = t('ai.watchOut', { value0: items.join(t('ai.and')) });
+  if (!allowVisualSide || !hasImmediateHazard(result)) return warning;
+  const near = result.obstacles.filter((item) => item.distanceBand === aiResultLabels.distance.near);
+  const leftBlocked = near.some((item) => item.position === aiResultLabels.position.left);
+  const rightBlocked = near.some((item) => item.position === aiResultLabels.position.right);
+  const distanceCaution = near.every((item) => item.distanceMeters == null) ? ` ${t('ai.visualDistanceUnknown')}` : '';
+  if (leftBlocked && rightBlocked) return `${warning}. ${t('ai.visualBothSidesBlocked')}${distanceCaution}`;
+  if (!result.visualSide || (result.visualSide === 'left' && leftBlocked) || (result.visualSide === 'right' && rightBlocked)) return distanceCaution ? `${warning}.${distanceCaution}` : warning;
+  const side = result.visualSide === 'left' ? t('ai.left') : t('ai.right');
+  return `${warning}. ${t('ai.visualSideClearer', { value0: side })}${distanceCaution}`;
 }
 
 type NavigationCue = {

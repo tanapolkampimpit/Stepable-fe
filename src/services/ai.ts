@@ -5,6 +5,7 @@ export type AiDetection = {
   confidence: number;
   position: string;
   distanceBand: string;
+  distanceMeters?: number;
   bbox: { x: number; y: number; width: number; height: number };
 };
 
@@ -14,6 +15,7 @@ export type AiAnalysis = {
   classes: string[];
   sidewalkCoverage: number;
   obstacles: AiDetection[];
+  visualSide: 'left' | 'right' | null;
 };
 
 export function getAiApiUrl(): string {

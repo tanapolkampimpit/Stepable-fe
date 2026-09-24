@@ -5,20 +5,22 @@ import { toByteArray } from 'base64-js';
 import jpeg from 'jpeg-js';
 import { Image, Platform } from 'react-native';
 import { InferenceSession, Tensor } from 'onnxruntime-react-native';
-import type { AiAnalysis, AiDetection } from './ai';
+import type { AiAnalysis } from './ai';
 import { throwLocalAiError } from './local-ai-errors';
-import { aiResultLabels } from '../i18n/detections';
+import { decodeAnalysis, IMAGE_HEIGHT, IMAGE_WIDTH } from './local-ai-shared';
 
 import modelAsset from '../../assets/models/stepable-unet3plus.int8.onnx';
+import depthModelAsset from '../../assets/models/depth-anything-v2-metric-outdoor-small.int8.onnx';
 
 const MODEL_NAME = 'stepable-unet3plus.int8.onnx';
-const IMAGE_WIDTH = 512;
-const IMAGE_HEIGHT = 288;
-const CLASSES = ['person', 'vehicle', 'two_wheeler', 'road_sidewalk', 'building', 'vegetation', 'street_fixture'];
-const OBSTACLE_CLASS_NAMES = new Set(['person', 'vehicle', 'two_wheeler', 'street_fixture']);
+const DEPTH_MODEL_NAME = 'depth-anything-v2-metric-outdoor-small.int8.onnx';
+const DEPTH_SIZE = 280;
+const DEPTH_MEAN = [0.485, 0.456, 0.406];
+const DEPTH_STD = [0.229, 0.224, 0.225];
 
 type ModelSession = Awaited<ReturnType<typeof InferenceSession.create>>;
 let sessionPromise: Promise<ModelSession> | null = null;
+let depthSessionPromise: Promise<ModelSession> | null = null;
 
 function getImageSize(uri: string): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
@@ -49,6 +51,67 @@ async function getSession(): Promise<ModelSession> {
   return sessionPromise;
 }
 
+async function getDepthSession(): Promise<ModelSession> {
+  if (!depthSessionPromise) {
+    depthSessionPromise = (async () => {
+      const asset = Asset.fromModule(depthModelAsset);
+      await asset.downloadAsync();
+      const sourceUri = asset.localUri ?? asset.uri;
+      if (!sourceUri) throwLocalAiError('model_unavailable');
+      const source = new File(sourceUri);
+      const destination = new File(Paths.document, DEPTH_MODEL_NAME);
+      if (!destination.exists) await source.copy(destination);
+      return InferenceSession.create(destination.uri, { executionProviders: ['cpu'] });
+    })().catch((error) => {
+      depthSessionPromise = null;
+      throw error;
+    });
+  }
+  return depthSessionPromise;
+}
+
+async function imageToDepthTensor(uri: string, original: { width: number; height: number }) {
+  const scale = DEPTH_SIZE / Math.max(original.width, original.height);
+  const width = Math.max(1, Math.round(original.width * scale));
+  const height = Math.max(1, Math.round(original.height * scale));
+  const resized = await manipulateAsync(uri, [{ resize: { width, height } }], { compress: 1, format: SaveFormat.JPEG, base64: true });
+  if (!resized.base64) throwLocalAiError('image_preparation_failed');
+  const decoded = jpeg.decode(toByteArray(resized.base64), { useTArray: true });
+  if (decoded.width > DEPTH_SIZE || decoded.height > DEPTH_SIZE) throwLocalAiError('image_dimensions_invalid');
+  const offsetX = Math.floor((DEPTH_SIZE - decoded.width) / 2);
+  const offsetY = Math.floor((DEPTH_SIZE - decoded.height) / 2);
+  const pixels = DEPTH_SIZE * DEPTH_SIZE;
+  const values = new Float32Array(3 * pixels);
+  for (let y = 0; y < decoded.height; y += 1) {
+    for (let x = 0; x < decoded.width; x += 1) {
+      const source = (y * decoded.width + x) * 4;
+      const pixel = (y + offsetY) * DEPTH_SIZE + x + offsetX;
+      for (let channel = 0; channel < 3; channel += 1) {
+        values[channel * pixels + pixel] = (decoded.data[source + channel] / 255 - DEPTH_MEAN[channel]) / DEPTH_STD[channel];
+      }
+    }
+  }
+  return { tensor: new Tensor('float32', values, [1, 3, DEPTH_SIZE, DEPTH_SIZE]), width: decoded.width, height: decoded.height, offsetX, offsetY };
+}
+
+function estimateObstacleMeters(depth: Float32Array, obstacle: AiAnalysis['obstacles'][number], image: AiAnalysis['image'], frame: { width: number; height: number; offsetX: number; offsetY: number }): number | undefined {
+  const values: number[] = [];
+  for (const yFraction of [0.3, 0.5, 0.7]) {
+    for (const xFraction of [0.3, 0.5, 0.7]) {
+      const imageX = obstacle.bbox.x + obstacle.bbox.width * xFraction;
+      const imageY = obstacle.bbox.y + obstacle.bbox.height * yFraction;
+      const x = Math.min(DEPTH_SIZE - 1, Math.max(0, Math.floor(frame.offsetX + imageX / image.width * frame.width)));
+      const y = Math.min(DEPTH_SIZE - 1, Math.max(0, Math.floor(frame.offsetY + imageY / image.height * frame.height)));
+      const meters = depth[y * DEPTH_SIZE + x];
+      if (Number.isFinite(meters) && meters >= 0.5 && meters <= 30) values.push(meters);
+    }
+  }
+  if (values.length < 5) return undefined;
+  values.sort((a, b) => a - b);
+  const median = values[Math.floor(values.length / 2)];
+  return Number((Math.round(median * 2) / 2).toFixed(1));
+}
+
 async function imageToTensor(uri: string): Promise<{ tensor: Tensor; original: { width: number; height: number } }> {
   const original = await getImageSize(uri);
   const resized = await manipulateAsync(
@@ -71,80 +134,23 @@ async function imageToTensor(uri: string): Promise<{ tensor: Tensor; original: {
   return { tensor: new Tensor('float32', values, [1, 3, IMAGE_HEIGHT, IMAGE_WIDTH]), original };
 }
 
-function decodeAnalysis(logits: Float32Array, original: { width: number; height: number }): AiAnalysis {
-  const pixels = IMAGE_WIDTH * IMAGE_HEIGHT;
-  const pixelCounts = new Int32Array(CLASSES.length);
-  const confidenceSums = new Float64Array(CLASSES.length);
-  const minX = new Int32Array(CLASSES.length).fill(IMAGE_WIDTH);
-  const minY = new Int32Array(CLASSES.length).fill(IMAGE_HEIGHT);
-  const maxX = new Int32Array(CLASSES.length).fill(-1);
-  const maxY = new Int32Array(CLASSES.length).fill(-1);
-
-  for (let pixel = 0; pixel < pixels; pixel += 1) {
-    let bestClass = 0;
-    let bestLogit = logits[pixel];
-    let maxLogit = bestLogit;
-    for (let classIndex = 1; classIndex < CLASSES.length; classIndex += 1) {
-      const value = logits[classIndex * pixels + pixel];
-      if (value > bestLogit) {
-        bestLogit = value;
-        bestClass = classIndex;
-      }
-      if (value > maxLogit) maxLogit = value;
-    }
-
-    let normalizer = 0;
-    for (let classIndex = 0; classIndex < CLASSES.length; classIndex += 1) {
-      normalizer += Math.exp(logits[classIndex * pixels + pixel] - maxLogit);
-    }
-    const confidence = Math.exp(bestLogit - maxLogit) / normalizer;
-    const x = pixel % IMAGE_WIDTH;
-    const y = Math.floor(pixel / IMAGE_WIDTH);
-    pixelCounts[bestClass] += 1;
-    confidenceSums[bestClass] += confidence;
-    minX[bestClass] = Math.min(minX[bestClass], x);
-    minY[bestClass] = Math.min(minY[bestClass], y);
-    maxX[bestClass] = Math.max(maxX[bestClass], x);
-    maxY[bestClass] = Math.max(maxY[bestClass], y);
-  }
-
-  const obstacles: AiDetection[] = [];
-  for (let classIndex = 0; classIndex < CLASSES.length; classIndex += 1) {
-    const className = CLASSES[classIndex];
-    const count = pixelCounts[classIndex];
-    if (!OBSTACLE_CLASS_NAMES.has(className) || count < 24) continue;
-    const confidence = confidenceSums[classIndex] / count;
-    if (confidence < 0.42 || maxX[classIndex] < 0) continue;
-    const x = Math.floor((minX[classIndex] / IMAGE_WIDTH) * original.width);
-    const y = Math.floor((minY[classIndex] / IMAGE_HEIGHT) * original.height);
-    const right = Math.ceil(((maxX[classIndex] + 1) / IMAGE_WIDTH) * original.width);
-    const bottom = Math.ceil(((maxY[classIndex] + 1) / IMAGE_HEIGHT) * original.height);
-    const centerX = ((x + right) / 2) / Math.max(1, original.width);
-    const bottomRatio = bottom / Math.max(1, original.height);
-    const areaRatio = ((right - x) * (bottom - y)) / Math.max(1, original.width * original.height);
-    obstacles.push({
-      className,
-      confidence: Number(confidence.toFixed(3)),
-      position: centerX < 0.35 ? aiResultLabels.position.left : centerX > 0.65 ? aiResultLabels.position.right : aiResultLabels.position.ahead,
-      distanceBand: bottomRatio > 0.82 || areaRatio > 0.18 ? aiResultLabels.distance.near : aiResultLabels.distance.fartherAhead,
-      bbox: { x, y, width: Math.max(1, right - x), height: Math.max(1, bottom - y) },
-    });
-  }
-
-  return {
-    model: MODEL_NAME,
-    image: original,
-    classes: CLASSES,
-    sidewalkCoverage: pixelCounts[3] / pixels,
-    obstacles: obstacles.sort((first, second) => second.confidence - first.confidence),
-  };
-}
-
 export async function analyzeImageLocally(uri: string): Promise<AiAnalysis> {
   const session = await getSession();
   const { tensor, original } = await imageToTensor(uri);
   const output = await session.run({ image: tensor });
   const logits = output.logits?.data;
   if (!(logits instanceof Float32Array)) throwLocalAiError('invalid_model_output');
-  return decodeAnalysis(logits, original);
+  const analysis = decodeAnalysis(logits, original);
+  if (!analysis.obstacles.length) return analysis;
+  try {
+    const [depthSession, frame] = await Promise.all([getDepthSession(), imageToDepthTensor(uri, original)]);
+    const depth = (await depthSession.run({ image: frame.tensor })).depth?.data;
+    if (!(depth instanceof Float32Array) || depth.length !== DEPTH_SIZE * DEPTH_SIZE) return analysis;
+    for (const obstacle of analysis.obstacles) {
+      obstacle.distanceMeters = estimateObstacleMeters(depth, obstacle, original, frame);
+    }
+  } catch {
+    // Keep object warnings available if the optional depth model cannot run.
+  }
+  return analysis;
 }
