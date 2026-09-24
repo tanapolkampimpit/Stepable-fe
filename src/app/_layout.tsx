@@ -7,8 +7,8 @@ import { NotoSansThai_600SemiBold } from '@expo-google-fonts/noto-sans-thai/600S
 import { NotoSansThai_700Bold } from '@expo-google-fonts/noto-sans-thai/700Bold';
 import { NotoSansThai_800ExtraBold } from '@expo-google-fonts/noto-sans-thai/800ExtraBold';
 import { NotoSansThai_900Black } from '@expo-google-fonts/noto-sans-thai/900Black';
-import { BottomNavigationProvider } from '../components/bottom-navigation/BottomNavigationContext';
-import { AppDataProvider } from '../components/AppDataContext';
+import { BottomNavigationProvider } from '../components/navigation/BottomNavigationContext';
+import { AppDataProvider } from '../providers/app-data';
 
 void SplashScreen.preventAutoHideAsync();
 

@@ -1,8 +1,8 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import { AppText as Text } from './AppText';
+import { AppText as Text } from '../ui/AppText';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import type { Coordinates } from '../services/geo';
+import type { Coordinates } from '../../services/geo';
 
 export type OSMMapMarker = { id: string; label: string; coordinates: Coordinates; color?: string };
 export type OpenStreetMapHandle = { zoomIn: () => void; zoomOut: () => void; centerOn: (coordinates: Coordinates) => void };
@@ -16,6 +16,9 @@ type OpenStreetMapProps = {
   route?: Coordinates[];
   onMapPress?: (coordinates: Coordinates) => void;
 };
+
+const MAP_TILE_URL = process.env.EXPO_PUBLIC_MAP_TILE_URL?.trim() || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const MAP_ATTRIBUTION = process.env.EXPO_PUBLIC_MAP_ATTRIBUTION?.trim() || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
 
 const MAP_HTML = `<!doctype html>
 <html lang="th">
@@ -43,7 +46,7 @@ const MAP_HTML = `<!doctype html>
       const send=(message)=>window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(message));
       if(!window.L){document.body.insertAdjacentHTML('beforeend','<div class="map-error">โหลดเครื่องมือแผนที่ไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วเปิดหน้านี้ใหม่</div>');send({type:'error'});return;}
       const map=L.map('map',{zoomControl:false,preferCanvas:true,zoomSnap:0.5,minZoom:3,maxZoom:19}).setView([0,0],3);
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,updateWhenIdle:true,updateWhenZooming:false,keepBuffer:1,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'}).addTo(map);
+      L.tileLayer('${MAP_TILE_URL}',{maxZoom:19,updateWhenIdle:true,updateWhenZooming:false,keepBuffer:1,attribution:'${MAP_ATTRIBUTION}'}).addTo(map);
       let userMarker=null,destinationMarker=null,routeLine=null,otherMarkers=[];
       const userIcon=L.divIcon({className:'',html:'<div class="stepable-pin"></div>',iconSize:[22,22],iconAnchor:[11,11]});
       const destinationIcon=L.divIcon({className:'',html:'<div class="stepable-destination"></div>',iconSize:[29,29],iconAnchor:[14,22]});

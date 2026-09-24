@@ -1,6 +1,6 @@
 import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 import { OpenStreetMap, type OSMMapMarker } from './OpenStreetMap';
-import type { Coordinates } from '../services/geo';
+import type { Coordinates } from '../../services/geo';
 
 type MapPreviewProps = {
   compact?: boolean;
