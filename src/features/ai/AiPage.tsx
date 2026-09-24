@@ -1,4 +1,4 @@
-import { detectionPosition } from '../../i18n/detections';
+import { detectionDistance, detectionPosition } from '../../i18n/detections';
 import { errorMessage, t, useLanguage, useMessageState } from '../../i18n';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, Pressable, Share, StyleSheet, View } from 'react-native';
@@ -62,7 +62,7 @@ export default function AiPage() {
       setAnalysis(await analyzeImage(uri));
     } catch (error) {
       setAnalysis(null);
-      setAnalysisError(errorMessage(error, 'ai.couldNotConnectToTheAiServer'));
+      setAnalysisError(errorMessage(error, 'ai.analysisFailed'));
     } finally {
       setAnalyzing(false);
     }
@@ -88,7 +88,7 @@ export default function AiPage() {
           Speech.speak(announcement, { language: locale, rate: 0.95 });
         }
       } catch (error) {
-        if (active) setAnalysisError(errorMessage(error, 'ai.liveImageAnalysisFailed'));
+        if (active) setAnalysisError(errorMessage(error, 'ai.analysisFailed'));
       } finally {
         liveBusy.current = false;
       }
@@ -213,14 +213,14 @@ function getAiClassLabels(): Record<string, string> { return {
 }; }
 
 function formatAnalysis(result: AiAnalysis) {
-  const labels = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} · ${detectionPosition(item.position)}`))];
+  const labels = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} · ${detectionPosition(item.position)} · ${detectionDistance(item.distanceBand)}`))];
   const detected = labels.length ? ` (${labels.join(', ')})` : '';
   return t('ai.obstaclesDetectedWalkwayCoverage', { value0: result.obstacles.length, value1: detected, value2: Math.round(result.sidewalkCoverage * 100) });
 }
 
 function liveAnnouncement(result: AiAnalysis) {
   if (!result.obstacles.length) return t('ai.noObstaclesDetectedAhead');
-  const items = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} ${detectionPosition(item.position)}`))];
+  const items = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} ${detectionPosition(item.position)} ${detectionDistance(item.distanceBand)}`))];
   return t('ai.watchOut', { value0: items.join(t('ai.and')) });
 }
 

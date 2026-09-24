@@ -21,6 +21,7 @@ function loadTs(file) {
 const core = loadTs('src/i18n/core');
 const reports = loadTs('src/i18n/reports');
 const detections = loadTs('src/i18n/detections');
+const localAiErrors = loadTs('src/services/local-ai-errors');
 const placeholders = (text) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
 const thai = /[\u0e00-\u0e7f]/;
 
@@ -50,14 +51,19 @@ assert.equal(reports.severityLabel(migrated[0].severity), 'High');
 assert.equal(detections.detectionPosition('ซ้าย'), 'on your left');
 assert.equal(detections.detectionPosition('right'), 'on your right');
 assert.equal(detections.detectionPosition('ตรงหน้า'), 'ahead');
+assert.equal(detections.detectionDistance('ใกล้'), 'near');
+assert.equal(detections.detectionDistance('ข้างหน้า'), 'farther ahead');
 const retainedNotice = core.message('home.noFoundNearby', { value0: core.message('home.ramps') });
 assert.ok(!thai.test(core.renderMessage(retainedNotice)));
 const savedError = new core.LocalizedError(core.message('service.aiServerReturnedStatus', { value0: 503 }));
+const modelError = localAiErrors.localAiError('model_unavailable');
 assert.match(core.renderMessage(savedError.localizedMessage), /503/);
+assert.match(core.renderMessage(modelError.localizedMessage), /AI model/);
 core.applyLanguage('th');
 assert.equal(core.getLocale(), 'th-TH');
 assert.equal(reports.issueLabel(migrated[0].type), 'ทางมืด');
 assert.ok(thai.test(core.renderMessage(savedError.localizedMessage)), 'Existing errors must change language');
+assert.ok(thai.test(core.renderMessage(modelError.localizedMessage)), 'Local AI errors must change language');
 assert.ok(thai.test(core.renderMessage(retainedNotice)), 'Nested category labels must follow the current language');
 assert.equal(updates, 2);
 unsubscribe();

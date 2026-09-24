@@ -11,10 +11,7 @@
       "supportsTablet": true,
       "infoPlist": {
         "CFBundleAllowMixedLocalizations": true,
-        "CFBundleLocalizations": [
-          "th",
-          "en"
-        ]
+        "CFBundleLocalizations": ["th", "en"]
       }
     },
     "android": {
@@ -31,6 +28,7 @@
       "bundler": "metro"
     },
     "plugins": [
+      "expo-dev-client",
       "expo-router",
       [
         "expo-location",
@@ -51,7 +49,9 @@
           "photosPermission": "StepAble accesses photos when you choose an image to attach to a report."
         }
       ],
-      "expo-font"
+      "expo-font",
+      "onnxruntime-react-native",
+      "expo-asset"
     ],
     "locales": {
       "th": "./src/i18n/native/th.json",
