@@ -1,3 +1,4 @@
+import { t, message, LocalizedError, getLanguage } from '../i18n/core';
 import { getAiApiUrl } from './ai';
 
 export type Coordinates = { latitude: number; longitude: number };
@@ -79,7 +80,7 @@ type PhotonFeature = {
 const PHOTON_API = 'https://photon.komoot.io';
 
 export async function searchOsmPlaces(query: string, near?: Coordinates): Promise<MapPlace[]> {
-  const params = new URLSearchParams({ q: query.trim(), limit: '12', lang: 'default' });
+  const params = new URLSearchParams({ q: query.trim(), limit: '12', lang: getLanguage() === 'en' ? 'en' : 'default' });
   if (near) {
     params.set('lat', String(near.latitude));
     params.set('lon', String(near.longitude));
@@ -88,7 +89,7 @@ export async function searchOsmPlaces(query: string, near?: Coordinates): Promis
   const response = await fetch(`${PHOTON_API}/api/?${params.toString()}`, {
     headers: { Accept: 'application/geo+json, application/json' },
   });
-  if (!response.ok) throw new Error('ค้นหาสถานที่ไม่สำเร็จ ลองอีกครั้ง');
+  if (!response.ok) throw new LocalizedError(message('service.couldNotSearchForPlacesTryAgain'));
 
   const data = (await response.json()) as { features?: PhotonFeature[] };
   return (data.features ?? []).flatMap((feature) => {
@@ -105,7 +106,7 @@ export async function searchOsmPlaces(query: string, near?: Coordinates): Promis
       id: `${props.osm_type ?? 'place'}-${props.osm_id ?? `${latitude}-${longitude}`}`,
       name: props.name,
       description: [placeLine, props.state, props.country].filter(Boolean).join(', '),
-      category: category || props.type || 'สถานที่จาก OpenStreetMap',
+      category: category || props.type || t('service.openstreetmapPlace'),
       coordinates: { latitude, longitude },
     }];
   });
@@ -116,7 +117,7 @@ export async function reverseGeocodeOsm(coordinates: Coordinates): Promise<strin
     lat: String(coordinates.latitude),
     lon: String(coordinates.longitude),
     limit: '1',
-    lang: 'default',
+    lang: getLanguage() === 'en' ? 'en' : 'default',
   });
   const response = await fetch(`${PHOTON_API}/reverse?${params.toString()}`, {
     headers: { Accept: 'application/geo+json, application/json' },
@@ -175,7 +176,7 @@ export async function getWalkingRoute(
   try {
     response = await fetch(`${endpoint}/v1/routes/walking`, {
       method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'Accept-Language': getLanguage() },
       body: JSON.stringify({
         origin,
         destination,
@@ -185,13 +186,12 @@ export async function getWalkingRoute(
     });
   } catch {
     if (/localhost|127\.0\.0\.1/.test(endpoint)) {
-      throw new Error(`มือถือเชื่อมต่อ ${endpoint} ไม่ได้: ใช้ IP ของคอมพิวเตอร์ในวง LAN แทน localhost`);
+      throw new LocalizedError(message('service.cannotConnectToUseYourComputerS', { value0: endpoint }));
     }
-    throw new Error(`เชื่อมต่อ AI server ไม่ได้ที่ ${endpoint}: ตรวจว่า server เปิดอยู่และมือถืออยู่ Wi-Fi เดียวกัน`);
+    throw new LocalizedError(message('service.cannotConnectToTheAiServerAt', { value0: endpoint }));
   }
   if (!response.ok) {
-    const error = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(error?.detail || `AI server ตอบกลับ ${response.status}`);
+    throw new LocalizedError(message('service.aiServerReturnedStatus', { value0: response.status }));
   }
   return await response.json() as WalkingRoute;
 }
@@ -243,10 +243,10 @@ export function getRouteProgress(route: WalkingRoute, current: Coordinates): Rou
 
 export function getManeuverInstruction(maneuver: WalkingManeuver): string {
   const instruction = `${maneuver.verbal_succinct_transition_instruction ?? ''} ${maneuver.instruction}`.toLowerCase();
-  if (instruction.includes('destination') || maneuver.type === 5) return 'ถึงจุดหมาย';
-  if (instruction.includes('u-turn')) return 'กลับตัว';
-  if (instruction.includes('left')) return 'เลี้ยวซ้าย';
-  if (instruction.includes('right')) return 'เลี้ยวขวา';
-  if (instruction.includes('straight') || instruction.includes('continue') || instruction.includes('walk')) return 'เดินตรงไป';
-  return 'เดินตามเส้นทาง';
+  if (instruction.includes('destination') || maneuver.type === 5) return t('service.arriveAtYourDestination');
+  if (instruction.includes('u-turn')) return t('service.makeAUTurn');
+  if (instruction.includes('left')) return t('service.turnLeft');
+  if (instruction.includes('right')) return t('service.turnRight');
+  if (instruction.includes('straight') || instruction.includes('continue') || instruction.includes('walk')) return t('service.continueStraight');
+  return t('service.followTheRoute');
 }

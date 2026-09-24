@@ -1,3 +1,4 @@
+import { t, getLanguage, useLanguage } from '../../i18n';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { AppText as Text } from '../ui/AppText';
@@ -20,8 +21,8 @@ type OpenStreetMapProps = {
 const MAP_TILE_URL = process.env.EXPO_PUBLIC_MAP_TILE_URL?.trim() || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const MAP_ATTRIBUTION = process.env.EXPO_PUBLIC_MAP_ATTRIBUTION?.trim() || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>';
 
-const MAP_HTML = `<!doctype html>
-<html lang="th">
+const createMapDocument = () => `<!doctype html>
+<html lang="${getLanguage()}">
 <head>
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <meta charset="utf-8" />
@@ -44,7 +45,7 @@ const MAP_HTML = `<!doctype html>
   <script>
     (function(){
       const send=(message)=>window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(message));
-      if(!window.L){document.body.insertAdjacentHTML('beforeend','<div class="map-error">โหลดเครื่องมือแผนที่ไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วเปิดหน้านี้ใหม่</div>');send({type:'error'});return;}
+      if(!window.L){document.body.insertAdjacentHTML('beforeend','<div class="map-error">${t('map.loadFailed')}</div>');send({type:'error'});return;}
       const map=L.map('map',{zoomControl:false,preferCanvas:true,zoomSnap:0.5,minZoom:3,maxZoom:19}).setView([0,0],3);
       L.tileLayer('${MAP_TILE_URL}',{maxZoom:19,updateWhenIdle:true,updateWhenZooming:false,keepBuffer:1,attribution:'${MAP_ATTRIBUTION}'}).addTo(map);
       let userMarker=null,destinationMarker=null,routeLine=null,otherMarkers=[];
@@ -75,10 +76,12 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
   { style, center, userLocation, destination, markers = [], route, onMapPress },
   forwardedRef,
 ) {
+  const { language } = useLanguage();
   const webView = useRef<WebView>(null);
-  const [ready, setReady] = useState(false);
+  const [readyLanguage, setReady] = useState<string | null>(null);
+  const ready = readyLanguage === language;
   const [error, setError] = useState(false);
-  const centerApplied = useRef(false);
+  const centerApplied = useRef('');
   const lastFitKey = useRef('');
   const inject = useCallback((source: string) => webView.current?.injectJavaScript(`${source};true;`), []);
   const centerOn = useCallback((coordinates: Coordinates) => inject(`window.StepAbleMap&&window.StepAbleMap.center(${coordinates.latitude},${coordinates.longitude},17)`), [inject]);
@@ -90,8 +93,8 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
   }), [centerOn, inject]);
 
   const fitKey = useMemo(() => destination || route?.length
-    ? `${destination?.id ?? ''}|${destination?.coordinates.latitude ?? ''}|${destination?.coordinates.longitude ?? ''}|${route?.map((point) => `${point.latitude},${point.longitude}`).join(';') ?? ''}`
-    : '', [destination, route]);
+    ? `${language}|${destination?.id ?? ''}|${destination?.coordinates.latitude ?? ''}|${destination?.coordinates.longitude ?? ''}|${route?.map((point) => `${point.latitude},${point.longitude}`).join(';') ?? ''}`
+    : '', [destination, route, language]);
   const shouldFit = Boolean(fitKey && fitKey !== lastFitKey.current);
   const mapData = useMemo(() => JSON.stringify({ user: userLocation, destination, markers, route: route ?? null, fit: shouldFit }), [userLocation, destination, markers, route, shouldFit]);
   useEffect(() => {
@@ -101,16 +104,16 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
   }, [fitKey, inject, mapData, ready, shouldFit]);
 
   useEffect(() => {
-    if (!ready || centerApplied.current || !center) return;
+    if (!ready || centerApplied.current === language || !center) return;
     centerOn(center);
-    centerApplied.current = true;
-  }, [center, centerOn, ready]);
+    centerApplied.current = language;
+  }, [center, centerOn, ready, language]);
 
   const onMessage = (event: WebViewMessageEvent) => {
     let message: MapMessage;
     try { message = JSON.parse(event.nativeEvent.data) as MapMessage; }
     catch { return; }
-    if (message.type === 'ready') { setReady(true); setError(false); }
+    if (message.type === 'ready') { setReady(language); setError(false); }
     if (message.type === 'error') setError(true);
     if (message.type === 'mapPress' && typeof message.latitude === 'number' && typeof message.longitude === 'number') {
       onMapPress?.({ latitude: message.latitude, longitude: message.longitude });
@@ -120,9 +123,9 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
   if (Platform.OS === 'web') {
     return (
       <View style={[styles.container, styles.webUnavailable, style]}>
-        <Text style={styles.webTitle}>เปิดแผนที่ OpenStreetMap</Text>
-        <Text style={styles.webCopy}>แผนที่โต้ตอบใช้ WebView บน iOS/Android</Text>
-        <Text accessibilityRole="link" onPress={() => { void import('react-native').then(({ Linking }) => Linking.openURL('https://www.openstreetmap.org/')); }} style={styles.link}>ดูบน OpenStreetMap.org</Text>
+        <Text style={styles.webTitle}>{t('common.openOpenstreetmap')}</Text>
+        <Text style={styles.webCopy}>{t('common.theInteractiveMapUsesWebviewOnIos')}</Text>
+        <Text accessibilityRole="link" onPress={() => { void import('react-native').then(({ Linking }) => Linking.openURL('https://www.openstreetmap.org/')); }} style={styles.link}>{t('common.viewOnOpenstreetmapOrg')}</Text>
       </View>
     );
   }
@@ -131,7 +134,7 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
     <View style={[styles.container, style]}>
       <WebView
         ref={webView}
-        source={{ html: MAP_HTML }}
+        source={{ html: createMapDocument() }}
         originWhitelist={['*']}
         javaScriptEnabled
         domStorageEnabled
@@ -143,9 +146,9 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
         onHttpError={() => setError(true)}
         onError={() => setError(true)}
         style={styles.webView}
-        accessibilityLabel="แผนที่ OpenStreetMap ลากเพื่อเลื่อนและบีบเพื่อซูม"
+        accessibilityLabel={t('common.openstreetmapDragToPanAndPinchTo')}
       />
-      {error ? <View style={styles.networkNotice}><Text style={styles.networkText}>โหลดแผนที่ไม่สำเร็จ · ตรวจอินเทอร์เน็ต</Text><Pressable onPress={() => webView.current?.reload()} accessibilityRole="button"><Text style={styles.retryText}>ลองอีกครั้ง</Text></Pressable></View> : null}
+      {error ? <View style={styles.networkNotice}><Text style={styles.networkText}>{t('common.couldNotLoadTheMapCheckYour')}</Text><Pressable onPress={() => webView.current?.reload()} accessibilityRole="button"><Text style={styles.retryText}>{t('common.tryAgain')}</Text></Pressable></View> : null}
     </View>
   );
 });

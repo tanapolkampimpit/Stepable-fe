@@ -1,3 +1,5 @@
+import { migrateReports } from '../../i18n/reports';
+import { t, useLanguage, useMessageState, message } from '../../i18n';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as Location from 'expo-location';
@@ -15,13 +17,14 @@ import type {
 } from './types';
 
 export function AppDataProvider({ children }: { children: ReactNode }) {
+  const { language } = useLanguage();
   const [location, setLocation] = useState<CurrentLocation | null>(null);
-  const [placeLabel, setPlaceLabel] = useState('ตำแหน่งยังไม่พร้อม');
+  const [placeLabel, setPlaceLabel] = useState(t('location.locationUnavailable'));
   const [locationStatus, setLocationStatus] = useState<AppDataValue['locationStatus']>('loading');
-  const [locationMessage, setLocationMessage] = useState('กำลังขอตำแหน่งปัจจุบันจากอุปกรณ์');
+  const [locationMessage, setLocationMessage] = useMessageState(message('location.requestingYourDeviceLocation'));
   const [isLocating, setIsLocating] = useState(false);
   const [weather, setWeather] = useState<CurrentWeather | null>(null);
-  const [weatherMessage, setWeatherMessage] = useState('กำลังโหลดอากาศตามตำแหน่งจริง');
+  const [weatherMessage, setWeatherMessage] = useMessageState(message('location.loadingWeatherForYourLocation'));
   const [timeNow, setTimeNow] = useState(0);
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES);
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([]);
@@ -30,7 +33,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [navigationPlan, setNavigationPlan] = useState<NavigationPlan | null>(null);
   const [storageReady, setStorageReady] = useState(false);
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
-  const lastReverseGeocode = useRef<Coordinates | null>(null);
+  const lastReverseGeocode = useRef<(Coordinates & { language: string }) | null>(null);
   const lastWeatherFetch = useRef<{ coordinates: Coordinates; timestamp: number } | null>(null);
 
   const refreshWeather = useCallback(() => {
@@ -48,17 +51,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     // still controls the normal/navigation update cadence below.
     setLocation((previous) => previous && distanceMeters(previous, updated) < 5 ? previous : updated);
     setLocationStatus('granted');
-    setLocationMessage('ตำแหน่งอัปเดตจาก GPS ของอุปกรณ์');
-  }, []);
+    setLocationMessage(message('location.locationUpdatedFromDeviceGps'));
+  }, [setLocationMessage]);
 
   const refreshLocation = useCallback(async () => {
     setIsLocating(true);
-    setLocationMessage('กำลังหาตำแหน่งจริงจากอุปกรณ์');
+    setLocationMessage(message('location.gettingYourDeviceLocation'));
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== 'granted') {
         setLocationStatus('denied');
-        setLocationMessage('ต้องอนุญาตตำแหน่งขณะใช้แอป จึงจะแสดงตำแหน่งจริงได้');
+        setLocationMessage(message('location.allowLocationAccessWhileUsingTheApp'));
         return null;
       }
 
@@ -70,12 +73,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       return { latitude: current.coords.latitude, longitude: current.coords.longitude };
     } catch {
       setLocationStatus('error');
-      setLocationMessage('อ่านตำแหน่งไม่ได้ ตรวจสอบว่าเปิด Location/GPS แล้วลองอีกครั้ง');
+      setLocationMessage(message('location.couldNotReadLocationEnableGpsAnd'));
       return null;
     } finally {
       setIsLocating(false);
     }
-  }, [applyLocation]);
+  }, [applyLocation, setLocationMessage]);
 
   useEffect(() => {
     let disposed = false;
@@ -107,18 +110,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         timeInterval: navigationPlan ? 3_000 : 8_000,
       },
       applyLocation,
-      () => setLocationMessage('ตำแหน่งสดหยุดชั่วคราว ระบบจะแสดงตำแหน่งล่าสุดที่อ่านได้'),
+      () => setLocationMessage(message('location.liveLocationPausedShowingTheLastKnown')),
     ).then((subscription) => {
       if (cancelled) subscription.remove();
       else locationSubscription.current = subscription;
-    }).catch(() => setLocationMessage('ตำแหน่งสดใช้ไม่ได้ แสดงตำแหน่งล่าสุดที่อ่านได้'));
+    }).catch(() => setLocationMessage(message('location.liveLocationUnavailableShowingTheLastKnown')));
 
     return () => {
       cancelled = true;
       locationSubscription.current?.remove();
       locationSubscription.current = null;
     };
-  }, [applyLocation, locationStatus, navigationPlan]);
+  }, [applyLocation, locationStatus, navigationPlan, setLocationMessage]);
 
   useEffect(() => {
     const initialTime = setTimeout(() => setTimeNow(Date.now()), 0);
@@ -129,10 +132,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!location) return;
     const last = lastReverseGeocode.current;
-    if (last && distanceMeters(last, location) < 250) return;
+    if (last && last.language === language && distanceMeters(last, location) < 250) return;
     let cancelled = false;
     const requestedAt = { latitude: location.latitude, longitude: location.longitude };
-    lastReverseGeocode.current = requestedAt;
+    lastReverseGeocode.current = { ...requestedAt, language };
     void reverseGeocodeOsm(location).then((place) => {
       if (!cancelled && place) setPlaceLabel(place);
       else if (!cancelled) setPlaceLabel(`${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`);
@@ -140,7 +143,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (!cancelled) setPlaceLabel(`${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`);
     });
     return () => { cancelled = true; };
-  }, [location]);
+  }, [location, language]);
 
   useEffect(() => {
     if (!location) return;
@@ -151,7 +154,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const coordinates = { latitude: location.latitude, longitude: location.longitude };
     let cancelled = false;
     lastWeatherFetch.current = { coordinates, timestamp: Date.now() };
-    setWeatherMessage('กำลังอัปเดตอากาศตามพิกัดจริง');
+    setWeatherMessage(message('location.updatingWeatherForYourLocation'));
     const url = new URL('https://api.open-meteo.com/v1/forecast');
     url.search = new URLSearchParams({
       latitude: String(coordinates.latitude),
@@ -175,13 +178,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           humidity: data.current.relative_humidity_2m,
           timezone: data.timezone,
         });
-        setWeatherMessage('อากาศล่าสุดจาก Open-Meteo ตามพิกัดปัจจุบัน');
+        setWeatherMessage(message('location.latestOpenMeteoWeatherForYourLocation'));
       }
     }).catch(() => {
-      if (!cancelled) setWeatherMessage('โหลดอากาศไม่ได้ ตรวจอินเทอร์เน็ตแล้วแตะเพื่อโหลดใหม่');
+      if (!cancelled) setWeatherMessage(message('location.couldNotLoadWeatherCheckYourConnection'));
     });
     return () => { cancelled = true; };
-  }, [location, timeNow]);
+  }, [location, timeNow, setWeatherMessage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -194,7 +197,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (storedPreferences) setPreferences({ ...DEFAULT_PREFERENCES, ...JSON.parse(storedPreferences) as Partial<UserPreferences> });
       if (storedSaved) setSavedPlaces(JSON.parse(storedSaved) as SavedPlace[]);
       if (storedReports) {
-        const parsedReports = JSON.parse(storedReports) as LocalReport[];
+        const parsedReports = migrateReports(JSON.parse(storedReports));
         reportsRef.current = parsedReports;
         setReports(parsedReports);
       }

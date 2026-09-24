@@ -1,3 +1,5 @@
+import { issueLabel, severityLabel } from '../../i18n/reports';
+import { t, useLanguage } from '../../i18n';
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { AppText as Text } from '../../components/ui/AppText';
@@ -9,74 +11,75 @@ import { distanceMeters } from '../../services/geo';
 import { colors } from '../../theme';
 import { router } from 'expo-router';
 
-const ALL = 'ทั้งหมด';
+const ALL = 'all';
 
 export default function AlertsPage() {
+  useLanguage();
   const { reports, location } = useAppData();
   const [active, setActive] = useState(ALL);
   const [filtersVisible, setFiltersVisible] = useState(true);
   const categories = useMemo(() => [ALL, ...Array.from(new Set(reports.map((report) => report.type)))], [reports]);
   const visibleReports = useMemo(() => active === ALL ? reports : reports.filter((report) => report.type === active), [active, reports]);
-  const markers = useMemo(() => reports.map((report) => ({
+  const markers = reports.map((report) => ({
     id: report.id,
-    label: `${report.type} · ${report.severity}`,
+    label: `${issueLabel(report.type)} · ${severityLabel(report.severity)}`,
     coordinates: report.coordinates,
-    color: report.severity === 'สูง' ? '#DC2626' : report.severity === 'ปานกลาง' ? '#F97316' : '#2563EB',
-  })), [reports]);
+    color: report.severity === 'high' ? '#DC2626' : report.severity === 'medium' ? '#F97316' : '#2563EB',
+  }));
 
   const openReportRoute = (report: LocalReport) => router.push({
     pathname: '/(tabs)/routes',
-    params: { destination: report.type, lat: String(report.coordinates.latitude), lon: String(report.coordinates.longitude) },
+    params: { destination: issueLabel(report.type), lat: String(report.coordinates.latitude), lon: String(report.coordinates.longitude) },
   });
 
   return (
     <Screen contentStyle={styles.content}>
       <View style={styles.header}>
         <View style={styles.headerSpacer} />
-        <Text style={styles.title}>แจ้งเตือนความปลอดภัย</Text>
-        <Pressable onPress={() => setFiltersVisible((value) => !value)} style={styles.filterIcon} accessibilityRole="button" accessibilityLabel={filtersVisible ? 'ซ่อนตัวกรอง' : 'แสดงตัวกรอง'} accessibilityState={{ expanded: filtersVisible }}>
+        <Text style={styles.title}>{t('common.safetyAlerts')}</Text>
+        <Pressable onPress={() => setFiltersVisible((value) => !value)} style={styles.filterIcon} accessibilityRole="button" accessibilityLabel={filtersVisible ? t('alerts.hideFilters') : t('alerts.showFilters')} accessibilityState={{ expanded: filtersVisible }}>
           <Icon name="sliders" size={21} color={colors.forest} />
         </Pressable>
       </View>
       {filtersVisible ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
-        {categories.map((item) => <Pressable key={item} onPress={() => setActive(item)} style={[styles.filter, active === item && styles.filterActive]} accessibilityRole="button" accessibilityState={{ selected: active === item }}><Text style={[styles.filterText, active === item && styles.filterTextActive]}>{item}</Text></Pressable>)}
+        {categories.map((item) => <Pressable key={item} onPress={() => setActive(item)} style={[styles.filter, active === item && styles.filterActive]} accessibilityRole="button" accessibilityState={{ selected: active === item }}><Text style={[styles.filterText, active === item && styles.filterTextActive]}>{item === ALL ? t('alerts.all') : issueLabel(item)}</Text></Pressable>)}
       </ScrollView> : null}
-      <View style={styles.sourceNote}><Icon name="info" size={14} color={colors.forest} /><Text style={styles.sourceText}>รายงานที่บันทึกในอุปกรณ์นี้ · ไม่มีข้อมูลรายงานสาธารณะจากเซิร์ฟเวอร์</Text></View>
+      <View style={styles.sourceNote}><Icon name="info" size={14} color={colors.forest} /><Text style={styles.sourceText}>{t('alerts.reportsSavedOnThisDeviceNoPublic')}</Text></View>
       <MapPreview compact center={location} userLocation={location} markers={markers} />
       {visibleReports.length ? <View style={styles.list}>{visibleReports.map((report) => {
-        const tone = report.severity === 'สูง' ? 'red' : report.severity === 'ปานกลาง' ? 'orange' : 'blue';
-        const icon: IconName = report.type.includes('แสง') || report.type.includes('มืด') ? 'sun' : report.type.includes('ทางเท้า') ? 'route' : 'warning';
-        const distance = location ? formatDistance(distanceMeters(location, report.coordinates)) : 'GPS ไม่พร้อม';
-        return <Pressable key={report.id} onPress={() => openReportRoute(report)} style={styles.card} accessibilityRole="button" accessibilityLabel={`${report.type}, ${distance}. แตะเพื่อดูเส้นทาง`}>
+        const tone = report.severity === 'high' ? 'red' : report.severity === 'medium' ? 'orange' : 'blue';
+        const icon: IconName = report.type === 'poor_lighting' ? 'sun' : report.type === 'damaged_sidewalk' ? 'route' : 'warning';
+        const distance = location ? formatDistance(distanceMeters(location, report.coordinates)) : t('alerts.gpsUnavailable');
+        return <Pressable key={report.id} onPress={() => openReportRoute(report)} style={styles.card} accessibilityRole="button" accessibilityLabel={t('alerts.tapForDirections', { value0: issueLabel(report.type), value1: distance })}>
           <View style={[styles.alertIcon, styles[tone]]}><Icon name={icon} size={24} color={iconColors[tone]} /></View>
           <View style={styles.cardCopy}>
-            <Text numberOfLines={1} style={styles.cardTitle}>{report.type}</Text>
+            <Text numberOfLines={1} style={styles.cardTitle}>{issueLabel(report.type)}</Text>
             <Text numberOfLines={1} style={styles.place}>{report.description || `${report.coordinates.latitude.toFixed(4)}, ${report.coordinates.longitude.toFixed(4)}`}</Text>
-            <View style={[styles.badge, styles[`${tone}Badge`]]}><Text style={[styles.badgeText, { color: iconColors[tone] }]}>{report.severity === 'สูง' ? 'เสี่ยงสูง' : `ความรุนแรง${report.severity}`}</Text></View>
+            <View style={[styles.badge, styles[`${tone}Badge`]]}><Text style={[styles.badgeText, { color: iconColors[tone] }]}>{report.severity === 'high' ? t('alerts.highRisk') : t('alerts.severity', { value0: severityLabel(report.severity) })}</Text></View>
           </View>
           <View style={styles.meta}><Text style={styles.metaText}>{distance}</Text><Text style={styles.metaText}>{formatAge(report.createdAt)}</Text><Icon name="chevron-right" size={18} color="#174589" /></View>
         </Pressable>;
       })}</View> : <View style={styles.emptyCard}>
         <View style={styles.emptyIcon}><Icon name="bell" size={25} color={colors.forest} /></View>
-        <Text style={styles.emptyTitle}>{reports.length ? 'ไม่มีรายงานในหมวดนี้' : 'ยังไม่มีรายงานในอุปกรณ์นี้'}</Text>
-        <Text style={styles.emptyText}>{reports.length ? 'เลือก “ทั้งหมด” หรือหมวดอื่นเพื่อดูรายงาน' : 'รายงานปัญหาพร้อมพิกัด GPS เพื่อดูรายการและหมุดบนแผนที่ได้ที่นี่'}</Text>
-        <Pressable onPress={() => router.push('/report-issue')} style={styles.reportButton} accessibilityRole="button"><Icon name="flag" size={17} color="#FFFFFF" /><Text style={styles.reportButtonText}>รายงานปัญหา</Text></Pressable>
+        <Text style={styles.emptyTitle}>{reports.length ? t('alerts.noReportsInThisCategory') : t('alerts.noReportsOnThisDeviceYet')}</Text>
+        <Text style={styles.emptyText}>{reports.length ? t('alerts.selectAllOrAnotherCategoryToView') : t('alerts.reportAnIssueWithItsGpsLocation')}</Text>
+        <Pressable onPress={() => router.push('/report-issue')} style={styles.reportButton} accessibilityRole="button"><Icon name="flag" size={17} color="#FFFFFF" /><Text style={styles.reportButtonText}>{t('ai.reportAnIssue')}</Text></Pressable>
       </View>}
     </Screen>
   );
 }
 
 function formatDistance(meters: number) {
-  return meters < 1_000 ? `${Math.round(meters)} เมตร` : `${(meters / 1_000).toFixed(1)} กม.`;
+  return meters < 1_000 ? t('ai.meters', { value0: Math.round(meters) }) : t('alerts.km', { value0: (meters / 1_000).toFixed(1) });
 }
 
 function formatAge(createdAt: string) {
   const elapsed = Math.max(0, Date.now() - new Date(createdAt).getTime());
-  if (!Number.isFinite(elapsed)) return 'เวลาไม่พร้อม';
-  if (elapsed < 60_000) return 'เมื่อสักครู่';
-  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} นาทีที่แล้ว`;
-  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} ชั่วโมงที่แล้ว`;
-  return `${Math.floor(elapsed / 86_400_000)} วันที่แล้ว`;
+  if (!Number.isFinite(elapsed)) return t('alerts.timeUnavailable');
+  if (elapsed < 60_000) return t('alerts.justNow');
+  if (elapsed < 3_600_000) return t('alerts.minutesAgo', { value0: Math.floor(elapsed / 60_000) });
+  if (elapsed < 86_400_000) return t('alerts.hoursAgo', { value0: Math.floor(elapsed / 3_600_000) });
+  return t('alerts.daysAgo', { value0: Math.floor(elapsed / 86_400_000) });
 }
 
 const iconColors = { red: '#DC2626', orange: '#F97316', blue: '#2563EB' };

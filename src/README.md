@@ -11,7 +11,7 @@ src/
 │   ├── maps/                Shared map presentation
 │   ├── navigation/          Navigation UI and its local context
 │   └── ui/                  Small reusable UI primitives
-├── data/                    Static, application-owned data
+├── i18n/                    Thai/English catalogs, language state, native strings
 ├── features/                Page-owned code, grouped by page name
 │   ├── ai/                  AI camera page
 │   ├── alerts/              Safety alerts page
@@ -41,5 +41,11 @@ src/
 - Keep network and platform calls in `services/`, not in presentation components.
 - Add a global state library only when React state/context is no longer sufficient.
   Empty architecture folders and speculative abstractions are intentionally avoided.
+
+## Languages
+
+See [i18n/README.md](./i18n/README.md) for adding translations, preserving saved
+reports, localizing service errors, and testing. Run `npm run test:i18n` alongside
+`npm run lint` and `npx tsc --noEmit` before handing off changes.
 - Use PascalCase for component files, `use...` for hooks, and descriptive domain
   names for services and data.
