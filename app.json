@@ -8,7 +8,11 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "CFBundleAllowMixedLocalizations": true,
+        "CFBundleLocalizations": ["th", "en"]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -29,25 +33,29 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "StepAble ใช้ตำแหน่งขณะเปิดแอปเพื่อแสดงแผนที่ สภาพอากาศ และเส้นทางเดินจริง"
+          "locationWhenInUsePermission": "StepAble uses your location while the app is open to show maps, weather, and walking routes."
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "StepAble ใช้กล้องเพื่อถ่ายภาพทางเท้าและแนบในรายงานปัญหา",
+          "cameraPermission": "StepAble uses the camera to analyze walkways and attach photos to issue reports.",
           "enableMicrophonePermission": false
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "StepAble เข้าถึงรูปภาพเมื่อคุณเลือกแนบรูปในรายงานปัญหา"
+          "photosPermission": "StepAble accesses photos when you choose an image to attach to a report."
         }
       ],
       "expo-font",
       "onnxruntime-react-native",
       "expo-asset"
-    ]
+    ],
+    "locales": {
+      "th": "./src/i18n/native/th.json",
+      "en": "./src/i18n/native/en.json"
+    }
   }
 }

@@ -1,0 +1,8 @@
+{
+  "ios": {
+    "NSCameraUsageDescription": "StepAble uses the camera to analyze walkways and attach photos to issue reports.",
+    "NSLocationWhenInUseUsageDescription": "StepAble uses your location while the app is open to show maps, weather, and walking routes.",
+    "NSPhotoLibraryUsageDescription": "StepAble accesses photos when you choose an image to attach to a report.",
+    "NSPhotoLibraryAddUsageDescription": "StepAble saves a photo only when you request it."
+  }
+}

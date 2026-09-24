@@ -1,3 +1,4 @@
+import { t, getLanguage, useLanguage } from '../../i18n';
 import { createElement, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { AppText as Text } from '../ui/AppText';
@@ -25,8 +26,10 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
   { style, center, userLocation, destination, markers = [], route, onMapPress },
   forwardedRef,
 ) {
+  const { language } = useLanguage();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const [ready, setReady] = useState(false);
+  const [readyLanguage, setReady] = useState<string | null>(null);
+  const ready = readyLanguage === language;
   const [error, setError] = useState(false);
   const [revision, setRevision] = useState(0);
   const lastFitKey = useRef('');
@@ -45,8 +48,8 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
   }), [centerOn, send]);
 
   const fitKey = useMemo(() => destination || route?.length
-    ? `${destination?.id ?? ''}|${destination?.coordinates.latitude ?? ''}|${destination?.coordinates.longitude ?? ''}|${route?.map((point) => `${point.latitude},${point.longitude}`).join(';') ?? ''}`
-    : '', [destination, route]);
+    ? `${language}|${revision}|${destination?.id ?? ''}|${destination?.coordinates.latitude ?? ''}|${destination?.coordinates.longitude ?? ''}|${route?.map((point) => `${point.latitude},${point.longitude}`).join(';') ?? ''}`
+    : '', [destination, route, language, revision]);
   const shouldFit = Boolean(fitKey && fitKey !== lastFitKey.current);
   const mapData = useMemo(() => ({ user: userLocation, destination, markers, route: route ?? null, fit: shouldFit }), [destination, markers, route, shouldFit, userLocation]);
 
@@ -55,7 +58,7 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
       if (event.source !== iframeRef.current?.contentWindow || !event.data || typeof event.data !== 'object') return;
       const message = event.data as MapMessage;
       if (message.source !== 'stepable-map') return;
-      if (message.type === 'ready') { setReady(true); setError(false); }
+      if (message.type === 'ready') { setReady(language); setError(false); }
       if (message.type === 'error') setError(true);
       if (message.type === 'mapPress' && typeof message.latitude === 'number' && typeof message.longitude === 'number') {
         onMapPress?.({ latitude: message.latitude, longitude: message.longitude });
@@ -63,7 +66,7 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
     };
     window.addEventListener('message', receive);
     return () => window.removeEventListener('message', receive);
-  }, [onMapPress, revision]);
+  }, [onMapPress, revision, language]);
 
   useEffect(() => {
     if (!ready) return;
@@ -73,10 +76,10 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
 
   useEffect(() => {
     if (ready && center) centerOn(center);
-  }, [center, centerOn, ready]);
+  }, [center, centerOn, ready, language]);
 
   const reload = () => {
-    setReady(false);
+    setReady(null);
     setError(false);
     setRevision((value) => value + 1);
   };
@@ -87,21 +90,21 @@ export const OpenStreetMap = forwardRef<OpenStreetMapHandle, OpenStreetMapProps>
         key: revision,
         ref: iframeRef,
         srcDoc: createMapDocument(),
-        title: 'แผนที่ OpenStreetMap แบบโต้ตอบ',
+        title: t('common.interactiveOpenstreetmap'),
         style: iframeStyle,
         sandbox: 'allow-scripts allow-same-origin',
         allow: 'geolocation',
         onLoad: () => setError(false),
       })}
-      {!ready && !error ? <View pointerEvents="none" style={styles.loading}><Text style={styles.loadingText}>กำลังโหลด OpenStreetMap…</Text></View> : null}
-      {error ? <View style={styles.networkNotice}><Text style={styles.networkText}>โหลดแผนที่ไม่สำเร็จ · ตรวจอินเทอร์เน็ต</Text><Pressable onPress={reload} accessibilityRole="button"><Text style={styles.retryText}>ลองอีกครั้ง</Text></Pressable></View> : null}
+      {!ready && !error ? <View pointerEvents="none" style={styles.loading}><Text style={styles.loadingText}>{t('common.loadingOpenstreetmap')}</Text></View> : null}
+      {error ? <View style={styles.networkNotice}><Text style={styles.networkText}>{t('common.couldNotLoadTheMapCheckYour')}</Text><Pressable onPress={reload} accessibilityRole="button"><Text style={styles.retryText}>{t('common.tryAgain')}</Text></Pressable></View> : null}
     </View>
   );
 });
 
 function createMapDocument() {
   return `<!doctype html>
-<html lang="th"><head>
+<html lang="${getLanguage()}"><head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -119,7 +122,7 @@ function createMapDocument() {
 </head><body><div id="map"></div><script>
   (function(){
     const send=(message)=>window.parent.postMessage({source:'stepable-map',...message},'*');
-    if(!window.L){document.body.insertAdjacentHTML('beforeend','<div class="map-error">โหลดเครื่องมือแผนที่ไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วลองใหม่</div>');send({type:'error'});return;}
+    if(!window.L){document.body.insertAdjacentHTML('beforeend','<div class="map-error">${t('map.loadFailed')}</div>');send({type:'error'});return;}
     const map=L.map('map',{zoomControl:false,preferCanvas:true,zoomSnap:.5,minZoom:3,maxZoom:19}).setView([0,0],3);
     const tiles=L.tileLayer('${MAP_TILE_URL}',{maxZoom:19,updateWhenIdle:true,updateWhenZooming:false,keepBuffer:1,attribution:'${MAP_ATTRIBUTION}'}).addTo(map);
     let userMarker=null,destinationMarker=null,routeLine=null,otherMarkers=[];

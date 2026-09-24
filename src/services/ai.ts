@@ -1,10 +1,11 @@
+import { LocalizedError, message } from '../i18n/core';
 import { analyzeImageLocally } from './local-ai';
 
 export type AiDetection = {
   className: string;
   confidence: number;
-  position: 'ซ้าย' | 'ตรงหน้า' | 'ขวา' | string;
-  distanceBand: 'ใกล้' | 'ข้างหน้า' | string;
+  position: string;
+  distanceBand: string;
   bbox: { x: number; y: number; width: number; height: number };
 };
 
@@ -16,13 +17,19 @@ export type AiAnalysis = {
   obstacles: AiDetection[];
 };
 
+// Kept for walking-route requests, which still use the configured backend.
 export function getAiApiUrl() {
   const value = process.env.EXPO_PUBLIC_AI_API_URL?.trim().replace(/\/$/, '');
-  if (!value) throw new Error('ยังไม่ได้ตั้งค่า EXPO_PUBLIC_AI_API_URL สำหรับ AI server');
-  if (value.includes('YOUR_LAN_IP')) throw new Error('กรุณาแทน YOUR_LAN_IP ด้วย IP ของคอมพิวเตอร์ที่รัน AI server');
+  if (!value) throw new LocalizedError(message('service.expoPublicAiApiUrlIsNot'));
+  if (value.includes('YOUR_LAN_IP')) throw new LocalizedError(message('service.replaceYourLanIpWithTheIp'));
   return value;
 }
 
 export async function analyzeImage(uri: string): Promise<AiAnalysis> {
-  return analyzeImageLocally(uri);
+  try {
+    return await analyzeImageLocally(uri);
+  } catch (error) {
+    if (error instanceof LocalizedError) throw error;
+    throw new LocalizedError(message('ai.analysisFailed'));
+  }
 }

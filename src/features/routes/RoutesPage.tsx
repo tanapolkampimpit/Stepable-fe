@@ -1,3 +1,4 @@
+import { errorMessage, renderMessage, type MessageValue, t, useLanguage } from '../../i18n';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { AppText as Text } from '../../components/ui/AppText';
@@ -10,13 +11,14 @@ import { getWalkingRoute, type Coordinates, type WalkingRoute } from '../../serv
 import { colors } from '../../theme';
 
 type RouteMode = 'recommended' | 'shortest' | 'accessible';
-const routeModes: { id: RouteMode; title: string; detail: string }[] = [
-  { id: 'recommended', title: 'ปลอดภัยที่สุด', detail: 'เน้นความปลอดภัยและทางเดินที่มีข้อมูล' },
-  { id: 'shortest', title: 'เร็วที่สุด', detail: 'เลือกเส้นทางที่ใช้เวลาน้อย' },
-  { id: 'accessible', title: 'เหมาะกับผู้ใช้วีลแชร์', detail: 'หลีกเลี่ยงบันไดและทางชัน' },
-];
 
 export default function RoutesPage() {
+  const routeModes: { id: RouteMode; title: string; detail: string }[] = [
+    { id: 'recommended', title: t('routes.safest'), detail: t('routes.prioritizeSafetyAndWalkwaysWithAvailableData') },
+    { id: 'shortest', title: t('routes.fastest'), detail: t('routes.chooseARouteWithLessTravelTime') },
+    { id: 'accessible', title: t('routes.wheelchairFriendly'), detail: t('routes.avoidStairsAndSteepSlopes') },
+  ];
+  useLanguage();
   const { destination, lat, lon } = useLocalSearchParams<{ destination?: string; lat?: string; lon?: string }>();
   const { location, locationStatus, locationMessage, preferences, savedPlaces, savePlace, removeSavedPlace, setNavigationPlan } = useAppData();
   const placeName = typeof destination === 'string' ? destination : '';
@@ -28,7 +30,7 @@ export default function RoutesPage() {
   const [mode, setMode] = useState<RouteMode>(preferences.wheelchair ? 'accessible' : 'recommended');
   const destinationKey = `${lat ?? ''}|${lon ?? ''}`;
   const [originSnapshot, setOriginSnapshot] = useState<{ destinationKey: string; coordinates: Coordinates } | null>(null);
-  const [calculation, setCalculation] = useState<{ key: string; route: WalkingRoute | null; error: string }>({ key: '', route: null, error: '' });
+  const [calculation, setCalculation] = useState<{ key: string; route: WalkingRoute | null; error: MessageValue }>({ key: '', route: null, error: '' });
   const [retryKey, setRetryKey] = useState(0);
   const saved = savedPlaces.some((item) => item.id === `search-${lat}-${lon}`);
 
@@ -56,20 +58,20 @@ export default function RoutesPage() {
       wheelchair: preferences.wheelchair || mode === 'accessible',
     });
     void request.then((result) => { if (active) setCalculation({ key: calculationKey, route: result, error: '' }); }).catch((reason) => {
-      if (active) setCalculation({ key: calculationKey, route: null, error: reason instanceof Error ? reason.message : 'คำนวณเส้นทางไม่สำเร็จ' });
+      if (active) setCalculation({ key: calculationKey, route: null, error: errorMessage(reason, 'routes.couldNotCalculateTheRoute') });
     });
     return () => { active = false; };
   }, [calculationKey, destinationPoint, routeOrigin, mode, preferences.safeFirst, preferences.avoidSteps, preferences.wheelchair, retryKey]);
 
   const route = calculation.key === calculationKey ? calculation.route : null;
-  const error = calculation.key === calculationKey ? calculation.error : '';
+  const error = calculation.key === calculationKey ? renderMessage(calculation.error) : '';
   const loading = Boolean(calculationKey && calculation.key !== calculationKey);
 
   const toggleSaved = () => {
     if (!destinationPoint) return;
     const id = `search-${lat}-${lon}`;
     if (saved) void removeSavedPlace(id);
-    else void savePlace({ id, label: placeName || 'สถานที่', coordinates: destinationPoint });
+    else void savePlace({ id, label: placeName || t('routes.place'), coordinates: destinationPoint });
   };
 
   const retryCalculation = () => {
@@ -91,17 +93,17 @@ export default function RoutesPage() {
   return (
     <Screen contentStyle={styles.content}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.circleButton} accessibilityRole="button" accessibilityLabel="กลับ"><Icon name="back" size={21} color="#174589" /></Pressable>
-        <Text style={styles.title}>ตัวเลือกเส้นทาง</Text>
-        <Pressable onPress={toggleSaved} style={styles.circleButton} accessibilityRole="button" accessibilityLabel={saved ? 'นำออกจากสถานที่โปรด' : 'บันทึกสถานที่โปรด'}><Icon name="star" size={20} color={saved ? '#F59E0B' : '#174589'} /></Pressable>
+        <Pressable onPress={() => router.back()} style={styles.circleButton} accessibilityRole="button" accessibilityLabel={t('reportissue.back')}><Icon name="back" size={21} color="#174589" /></Pressable>
+        <Text style={styles.title}>{t('routes.routeOptions')}</Text>
+        <Pressable onPress={toggleSaved} style={styles.circleButton} accessibilityRole="button" accessibilityLabel={saved ? t('routes.removeFromFavorites') : t('routes.saveToFavorites')}><Icon name="star" size={20} color={saved ? '#F59E0B' : '#174589'} /></Pressable>
       </View>
 
       <View style={styles.trip}>
         <View style={styles.currentDot} />
-        <View style={styles.tripCopy}><Text style={styles.tripLabel}>ต้นทาง · GPS</Text><Text numberOfLines={1} style={styles.tripText}>{location ? 'ตำแหน่งปัจจุบัน' : 'กำลังรอตำแหน่ง'}</Text></View>
+        <View style={styles.tripCopy}><Text style={styles.tripLabel}>{t('routes.startGps')}</Text><Text numberOfLines={1} style={styles.tripText}>{location ? t('routes.currentLocation') : t('routes.waitingForLocation')}</Text></View>
         <Icon name="arrow-right" size={18} color="#102A72" />
         <Icon name="pin" size={20} color="#EF4444" />
-        <Text numberOfLines={1} style={styles.tripDestination}>{placeName || 'ยังไม่ได้เลือกปลายทาง'}</Text>
+        <Text numberOfLines={1} style={styles.tripDestination}>{placeName || t('routes.noDestinationSelected')}</Text>
       </View>
 
       <MapPreview
@@ -112,56 +114,55 @@ export default function RoutesPage() {
         route={route?.coordinates}
       />
 
-      {loading ? <View style={styles.status}><ActivityIndicator color={colors.forest} /><Text style={styles.statusText}>กำลังคำนวณเส้นทางเดินจาก OpenStreetMap…</Text></View> : null}
-      {error ? <Pressable onPress={retryCalculation} style={styles.error} accessibilityRole="button"><Text style={styles.errorText}>{error} · แตะเพื่อลองอีกครั้ง</Text></Pressable> : null}
-      {!location ? <Text style={styles.hint}>{locationStatus === 'denied' ? locationMessage : 'ต้องใช้ตำแหน่ง GPS จริงเป็นจุดเริ่มต้น'}</Text> : null}
-      {!destinationPoint ? <Text style={styles.errorText}>ปลายทางนี้ไม่มีพิกัดจาก OpenStreetMap กรุณากลับไปเลือกผลค้นหาใหม่</Text> : null}
+      {loading ? <View style={styles.status}><ActivityIndicator color={colors.forest} /><Text style={styles.statusText}>{t('routes.calculatingAWalkingRoute')}</Text></View> : null}
+      {error ? <Pressable onPress={retryCalculation} style={styles.error} accessibilityRole="button"><Text style={styles.errorText}>{error}{t('navigation.tapToRetry')}</Text></Pressable> : null}
+      {!location ? <Text style={styles.hint}>{locationStatus === 'denied' ? locationMessage : t('routes.yourGpsLocationIsRequiredAsThe')}</Text> : null}
+      {!destinationPoint ? <Text style={styles.errorText}>{t('routes.thisDestinationHasNoOpenstreetmapCoordinatesGo')}</Text> : null}
 
       <View style={styles.routeOptions}>
         {routeModes.map((item) => <RouteOptionCard key={item.id} item={item} selected={mode === item.id} route={route} onPress={() => setMode(item.id)} />)}
       </View>
 
       <Pressable onPress={beginNavigation} disabled={!route || loading} style={[styles.start, (!route || loading) && styles.startDisabled]} accessibilityRole="button" accessibilityState={{ disabled: !route || loading }}>
-        <Text style={styles.startText}>{loading ? 'กำลังคำนวณเส้นทาง' : route ? 'เริ่มนำทาง' : 'เลือกปลายทางและรอเส้นทาง'}</Text><Icon name="arrow-right" size={22} color="#FFFFFF" />
+        <Text style={styles.startText}>{loading ? t('routes.calculatingRoute') : route ? t('routes.startNavigation') : t('routes.chooseADestinationAndWaitForA')}</Text><Icon name="arrow-right" size={22} color="#FFFFFF" />
       </Pressable>
     </Screen>
   );
 }
 
-function RouteOptionCard({ item, selected, route, onPress }: { item: (typeof routeModes)[number]; selected: boolean; route: WalkingRoute | null; onPress: () => void }) {
-  const multiplier = item.id === 'shortest' ? 0.82 : item.id === 'accessible' ? 1.18 : 1;
-  const distance = route ? route.distanceKm * multiplier : null;
-  const duration = route ? route.durationSeconds * (item.id === 'shortest' ? 0.84 : item.id === 'accessible' ? 1.24 : 1) : null;
-  const risk = route?.riskScore === null || route?.riskScore === undefined ? null : Math.max(0, Math.min(99, route.riskScore + (item.id === 'shortest' ? 12 : item.id === 'accessible' ? -2 : 0)));
+function RouteOptionCard({ item, selected, route, onPress }: { item: { id: RouteMode; title: string; detail: string }; selected: boolean; route: WalkingRoute | null; onPress: () => void }) {
+  useLanguage();
+  const distance = selected && route ? route.distanceKm : null;
+  const duration = selected && route ? route.durationSeconds : null;
+  const risk = selected && route?.riskAvailable ? route.riskScore : null;
   const accent = item.id === 'shortest' ? '#F97316' : item.id === 'accessible' ? '#16A166' : '#2563EB';
   return <Pressable onPress={onPress} style={[styles.routeOption, selected && styles.routeOptionSelected]} accessibilityRole="button" accessibilityState={{ selected }}>
     <View style={styles.optionHeader}>
       <View style={[styles.optionPath, { backgroundColor: accent }]}><Icon name={item.id === 'accessible' ? 'wheelchair' : 'route'} size={20} color="#FFFFFF" /></View>
       <View style={styles.optionTitleCopy}>
-        {item.id === 'recommended' ? <Text style={styles.optionBadge}>แนะนำ</Text> : null}
+        {item.id === 'recommended' ? <Text style={styles.optionBadge}>{t('routes.recommended')}</Text> : null}
         <Text style={styles.optionTitle}>{item.title}</Text>
       </View>
       <View style={[styles.radio, selected && { borderColor: accent }]}>{selected ? <View style={[styles.radioInner, { backgroundColor: accent }]} /> : null}</View>
     </View>
-    <Text numberOfLines={1} style={styles.optionDetail}>{item.detail}</Text>
+    <Text style={styles.optionDetail}>{item.detail}</Text>
+    {!selected ? <Text style={styles.optionDetail}>{t('routes.selectToCalculate')}</Text> : null}
     <View style={styles.optionStats}>
       <RouteStat icon="route" value={distance === null ? '—' : formatDistance(distance)} />
       <RouteStat icon="clock" value={duration === null ? '—' : formatDuration(duration)} />
-      <RouteStat icon="shield" value={risk === null ? 'Risk —' : `Risk Score ${Math.round(risk)}`} />
+      <RouteStat icon="shield" value={risk === null ? t('routes.riskUnavailable') : t('routes.riskScore', { score: Math.round(risk) })} />
     </View>
-    <View style={styles.optionChips}>
-      <View style={styles.optionChip}><Icon name={item.id === 'accessible' ? 'wheelchair' : 'walk'} size={13} color="#2563EB" /><Text style={styles.optionChipText}>{item.id === 'shortest' ? 'ตรงที่สุด' : item.id === 'accessible' ? 'หลีกเลี่ยงบันได' : 'ทางเท้าแนะนำ'}</Text></View>
-      <View style={styles.optionChip}><Icon name={item.id === 'shortest' ? 'navigation' : 'sun'} size={13} color="#2563EB" /><Text style={styles.optionChipText}>{item.id === 'shortest' ? 'ใช้เวลาน้อย' : item.id === 'accessible' ? 'ทางลาด' : 'แสงสว่างดี'}</Text></View>
-    </View>
+
   </Pressable>;
 }
 
 function RouteStat({ icon, value }: { icon: 'route' | 'clock' | 'shield'; value: string }) {
+  useLanguage();
   return <View style={styles.optionStat}><Icon name={icon} size={14} color="#294765" /><Text style={styles.optionStatText}>{value}</Text></View>;
 }
 
-function formatDistance(km: number) { return km < 1 ? `${Math.round(km * 1_000)} ม.` : `${km.toFixed(2)} กม.`; }
-function formatDuration(seconds: number) { const minutes = Math.max(1, Math.ceil(seconds / 60)); return minutes >= 60 ? `${Math.floor(minutes / 60)} ชม. ${minutes % 60} นาที` : `${minutes} นาที`; }
+function formatDistance(km: number) { return km < 1 ? t('navigation.m2', { value0: Math.round(km * 1_000) }) : t('alerts.km', { value0: km.toFixed(2) }); }
+function formatDuration(seconds: number) { const minutes = Math.max(1, Math.ceil(seconds / 60)); return minutes >= 60 ? t('navigation.hrMin', { value0: Math.floor(minutes / 60), value1: minutes % 60 }) : t('navigation.min', { value0: minutes }); }
 
 const styles = StyleSheet.create({
   content: { backgroundColor: '#F6FAFF' },
