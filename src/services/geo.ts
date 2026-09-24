@@ -1,3 +1,5 @@
+import { getAiApiUrl } from './ai';
+
 export type Coordinates = { latitude: number; longitude: number };
 
 export type MapPlace = {
@@ -30,6 +32,27 @@ export type WalkingRoute = {
   distanceKm: number;
   durationSeconds: number;
   maneuvers: WalkingManeuver[];
+  riskScore: number | null;
+  riskLevel: 'low' | 'medium' | 'high' | 'unknown';
+  maxRiskScore: number | null;
+  evaluatedEdges: number;
+  coverage: number;
+  riskAvailable: boolean;
+  riskMessage: string;
+  scoreSource: 'ml' | 'unavailable';
+  modelVersion: string;
+  candidateCount: number;
+  candidateIndex: number;
+  selectionMode: 'recommended' | 'shortest' | 'accessible';
+  selectionReason: string;
+};
+
+export type RouteProgress = {
+  nearestIndex: number;
+  maneuverIndex: number;
+  remainingKm: number;
+  remainingFraction: number;
+  offRoute: boolean;
 };
 
 type PhotonFeature = {
@@ -50,18 +73,6 @@ type PhotonFeature = {
     osm_key?: string;
     osm_value?: string;
     type?: string;
-  };
-};
-
-type ValhallaResponse = {
-  trip?: {
-    status?: number;
-    status_message?: string;
-    legs?: {
-      shape?: string;
-      summary?: { length?: number; time?: number };
-      maneuvers?: WalkingManeuver[];
-    }[];
   };
 };
 
@@ -158,46 +169,31 @@ export async function getWalkingRoute(
   destination: Coordinates,
   preferences: WalkingPreferences = {},
 ): Promise<WalkingRoute> {
-  const options: Record<string, number | boolean | string> = {};
-  if (preferences.avoidSteps || preferences.wheelchair) options.step_penalty = 600;
-  if (preferences.wheelchair) options.type = 'wheelchair';
-  if (preferences.shortest) options.shortest = true;
-
-  const response = await fetch('https://valhalla1.openstreetmap.de/route', {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      'X-Client-Id': 'StepAble mobile application',
-    },
-    body: JSON.stringify({
-      locations: [
-        { lat: origin.latitude, lon: origin.longitude, type: 'break' },
-        { lat: destination.latitude, lon: destination.longitude, type: 'break' },
-      ],
-      costing: 'pedestrian',
-      costing_options: { pedestrian: options },
-      units: 'kilometers',
-      directions_options: { units: 'kilometers' },
-    }),
-  });
+  const endpoint = getAiApiUrl();
+  const hour = new Date().getHours();
+  let response: Response;
+  try {
+    response = await fetch(`${endpoint}/v1/routes/walking`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        origin,
+        destination,
+        preferences,
+        isNight: hour < 6 || hour >= 18,
+      }),
+    });
+  } catch {
+    if (/localhost|127\.0\.0\.1/.test(endpoint)) {
+      throw new Error(`มือถือเชื่อมต่อ ${endpoint} ไม่ได้: ใช้ IP ของคอมพิวเตอร์ในวง LAN แทน localhost`);
+    }
+    throw new Error(`เชื่อมต่อ AI server ไม่ได้ที่ ${endpoint}: ตรวจว่า server เปิดอยู่และมือถืออยู่ Wi-Fi เดียวกัน`);
+  }
   if (!response.ok) {
-    if (response.status === 429) throw new Error('บริการเส้นทางมีผู้ใช้มาก ลองใหม่อีกสักครู่');
-    throw new Error('ขอเส้นทางเดินไม่สำเร็จ ตรวจอินเทอร์เน็ตแล้วลองใหม่');
+    const error = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(error?.detail || `AI server ตอบกลับ ${response.status}`);
   }
-
-  const data = (await response.json()) as ValhallaResponse;
-  const leg = data.trip?.legs?.[0];
-  if (!leg?.shape || !leg.summary || !leg.maneuvers?.length || data.trip?.status) {
-    throw new Error(data.trip?.status_message || 'ไม่พบเส้นทางเดินระหว่างจุดนี้');
-  }
-
-  return {
-    coordinates: decodePolyline6(leg.shape),
-    distanceKm: leg.summary.length ?? 0,
-    durationSeconds: leg.summary.time ?? 0,
-    maneuvers: leg.maneuvers,
-  };
+  return await response.json() as WalkingRoute;
 }
 
 export function distanceMeters(from: Coordinates, to: Coordinates): number {
@@ -208,4 +204,49 @@ export function distanceMeters(from: Coordinates, to: Coordinates): number {
   const deltaLon = radians(to.longitude - from.longitude);
   const a = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
   return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/** Distance along the decoded route, rather than straight-line distance. */
+export function distanceBetweenRouteIndices(points: Coordinates[], start: number, end: number): number {
+  if (!points.length) return 0;
+  let total = 0;
+  const from = Math.max(0, Math.min(start, points.length - 1));
+  const to = Math.max(from, Math.min(end, points.length - 1));
+  for (let index = from; index < to; index += 1) total += distanceMeters(points[index], points[index + 1]);
+  return total;
+}
+
+/** Match the phone GPS position to the next turn in a Valhalla walking route. */
+export function getRouteProgress(route: WalkingRoute, current: Coordinates): RouteProgress {
+  let nearestIndex = 0;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  route.coordinates.forEach((point, index) => {
+    const distance = distanceMeters(current, point);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  });
+
+  const remainingMeters = distanceBetweenRouteIndices(route.coordinates, nearestIndex, route.coordinates.length - 1);
+  const totalMeters = Math.max(route.distanceKm * 1_000, 1);
+  const foundManeuverIndex = route.maneuvers.findIndex((maneuver) => maneuver.end_shape_index >= nearestIndex);
+  const maneuverIndex = Math.max(0, foundManeuverIndex < 0 ? route.maneuvers.length - 1 : foundManeuverIndex);
+  return {
+    nearestIndex,
+    maneuverIndex,
+    remainingKm: remainingMeters / 1_000,
+    remainingFraction: Math.min(1, remainingMeters / totalMeters),
+    offRoute: nearestDistance > 120,
+  };
+}
+
+export function getManeuverInstruction(maneuver: WalkingManeuver): string {
+  const instruction = `${maneuver.verbal_succinct_transition_instruction ?? ''} ${maneuver.instruction}`.toLowerCase();
+  if (instruction.includes('destination') || maneuver.type === 5) return 'ถึงจุดหมาย';
+  if (instruction.includes('u-turn')) return 'กลับตัว';
+  if (instruction.includes('left')) return 'เลี้ยวซ้าย';
+  if (instruction.includes('right')) return 'เลี้ยวขวา';
+  if (instruction.includes('straight') || instruction.includes('continue') || instruction.includes('walk')) return 'เดินตรงไป';
+  return 'เดินตามเส้นทาง';
 }

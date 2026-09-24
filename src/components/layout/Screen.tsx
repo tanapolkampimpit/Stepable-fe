@@ -2,8 +2,8 @@ import { useCallback, useRef, type ReactNode } from 'react';
 import { type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, ScrollView, StyleSheet, type ViewStyle } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors } from '../theme';
-import { useBottomNavigation } from './bottom-navigation/BottomNavigationContext';
+import { colors } from '../../theme';
+import { useBottomNavigation } from '../navigation/BottomNavigationContext';
 
 type ScreenProps = { children: ReactNode; contentStyle?: ViewStyle };
 
