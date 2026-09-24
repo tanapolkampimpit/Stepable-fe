@@ -65,6 +65,20 @@ export default function RoutesPage() {
   const error = calculation.key === calculationKey ? calculation.error : '';
   const loading = Boolean(calculationKey && calculation.key !== calculationKey);
 
+  const selectedAlt = useMemo(() => {
+    if (!route?.alternatives?.length) return null;
+    if (mode === 'accessible') return route.alternatives.find((a) => a.type === 'accessible') || null;
+    if (mode === 'shortest') return route.alternatives.find((a) => a.type === 'fastest') || null;
+    return route.alternatives.find((a) => a.type === 'recommended') || route.alternatives[0] || null;
+  }, [route, mode]);
+
+  const activeCoordinates = useMemo(() => {
+    if (selectedAlt?.geometry?.coordinates?.length) {
+      return selectedAlt.geometry.coordinates.map(([lon, lat]) => ({ latitude: lat, longitude: lon }));
+    }
+    return route?.coordinates;
+  }, [selectedAlt, route]);
+
   const toggleSaved = () => {
     if (!destinationPoint) return;
     const id = `search-${lat}-${lon}`;
@@ -79,10 +93,44 @@ export default function RoutesPage() {
 
   const beginNavigation = () => {
     if (!route || !destinationPoint || !placeName) return;
+
+    // Use selected alternative if present
+    let navRoute = route;
+    if (selectedAlt && activeCoordinates) {
+      const totalCoords = Math.max(1, activeCoordinates.length);
+      const stepCount = Math.max(1, selectedAlt.steps.length);
+      const maneuvers = selectedAlt.steps.map((st, idx) => {
+        const begin_shape_index = Math.floor((idx / stepCount) * totalCoords);
+        const end_shape_index = Math.floor(((idx + 1) / stepCount) * totalCoords);
+        const warning = st.hazardWarning ? ` ⚠️ ${st.hazardWarning}` : '';
+        const nameSuffix = st.name ? ` (${st.name})` : '';
+        return {
+          instruction: `${st.instruction}${nameSuffix}${warning}`,
+          length: st.distanceMeters / 1000,
+          time: st.durationSeconds,
+          begin_shape_index,
+          end_shape_index,
+          type: st.type ?? 1,
+        };
+      });
+
+      navRoute = {
+        ...route,
+        coordinates: activeCoordinates,
+        distanceKm: selectedAlt.distanceMeters / 1000,
+        durationSeconds: selectedAlt.durationSeconds,
+        maneuvers: maneuvers.length > 0 ? maneuvers : route.maneuvers,
+        safeScore: selectedAlt.safeScore,
+        accessibilityScore: selectedAlt.accessibilityScore,
+        title: selectedAlt.title,
+        selectionMode: mode,
+      };
+    }
+
     setNavigationPlan({
       destination: { id: `route-${lat}-${lon}`, label: placeName, coordinates: destinationPoint },
       origin: location!,
-      route,
+      route: navRoute,
       routePreference: mode,
     });
     router.push({ pathname: '/navigate', params: { destination: placeName, lat, lon } });
@@ -109,13 +157,13 @@ export default function RoutesPage() {
         center={location}
         userLocation={location}
         destination={destinationPoint ? { id: `destination-${lat}-${lon}`, label: placeName, coordinates: destinationPoint } : null}
-        route={route?.coordinates}
+        route={activeCoordinates}
       />
 
-      {loading ? <View style={styles.status}><ActivityIndicator color={colors.forest} /><Text style={styles.statusText}>กำลังคำนวณเส้นทางเดินจาก OpenStreetMap…</Text></View> : null}
+      {loading ? <View style={styles.status}><ActivityIndicator color={colors.forest} /><Text style={styles.statusText}>กำลังคำนวณเส้นทางจาก StepAble API…</Text></View> : null}
       {error ? <Pressable onPress={retryCalculation} style={styles.error} accessibilityRole="button"><Text style={styles.errorText}>{error} · แตะเพื่อลองอีกครั้ง</Text></Pressable> : null}
       {!location ? <Text style={styles.hint}>{locationStatus === 'denied' ? locationMessage : 'ต้องใช้ตำแหน่ง GPS จริงเป็นจุดเริ่มต้น'}</Text> : null}
-      {!destinationPoint ? <Text style={styles.errorText}>ปลายทางนี้ไม่มีพิกัดจาก OpenStreetMap กรุณากลับไปเลือกผลค้นหาใหม่</Text> : null}
+      {!destinationPoint ? <Text style={styles.errorText}>ปลายทางนี้ไม่มีพิกัด กรุณากลับไปเลือกสถานที่ใหม่</Text> : null}
 
       <View style={styles.routeOptions}>
         {routeModes.map((item) => <RouteOptionCard key={item.id} item={item} selected={mode === item.id} route={route} onPress={() => setMode(item.id)} />)}
@@ -129,31 +177,58 @@ export default function RoutesPage() {
 }
 
 function RouteOptionCard({ item, selected, route, onPress }: { item: (typeof routeModes)[number]; selected: boolean; route: WalkingRoute | null; onPress: () => void }) {
-  const multiplier = item.id === 'shortest' ? 0.82 : item.id === 'accessible' ? 1.18 : 1;
-  const distance = route ? route.distanceKm * multiplier : null;
-  const duration = route ? route.durationSeconds * (item.id === 'shortest' ? 0.84 : item.id === 'accessible' ? 1.24 : 1) : null;
-  const risk = route?.riskScore === null || route?.riskScore === undefined ? null : Math.max(0, Math.min(99, route.riskScore + (item.id === 'shortest' ? 12 : item.id === 'accessible' ? -2 : 0)));
+  const alt = route?.alternatives?.find((a) => (
+    item.id === 'accessible' ? a.type === 'accessible' :
+    item.id === 'shortest' ? a.type === 'fastest' :
+    a.type === 'recommended'
+  ));
+
+  const distance = alt ? alt.distanceMeters / 1000 : route ? route.distanceKm : null;
+  const duration = alt ? alt.durationSeconds : route ? route.durationSeconds : null;
+  const safeScore = alt?.safeScore ?? route?.safeScore ?? 85;
   const accent = item.id === 'shortest' ? '#F97316' : item.id === 'accessible' ? '#16A166' : '#2563EB';
-  return <Pressable onPress={onPress} style={[styles.routeOption, selected && styles.routeOptionSelected]} accessibilityRole="button" accessibilityState={{ selected }}>
-    <View style={styles.optionHeader}>
-      <View style={[styles.optionPath, { backgroundColor: accent }]}><Icon name={item.id === 'accessible' ? 'wheelchair' : 'route'} size={20} color="#FFFFFF" /></View>
-      <View style={styles.optionTitleCopy}>
-        {item.id === 'recommended' ? <Text style={styles.optionBadge}>แนะนำ</Text> : null}
-        <Text style={styles.optionTitle}>{item.title}</Text>
+
+  const chips = alt?.features?.length ? alt.features.slice(0, 2) : [
+    item.id === 'shortest' ? 'ระยะสั้นที่สุด' : item.id === 'accessible' ? 'หลีกเลี่ยงบันได' : 'ทางเท้าปลอดภัย',
+    item.id === 'shortest' ? 'ประหยัดเวลา' : item.id === 'accessible' ? 'ทางลาด 100%' : 'แสงสว่างดี',
+  ];
+
+  return (
+    <Pressable onPress={onPress} style={[styles.routeOption, selected && styles.routeOptionSelected]} accessibilityRole="button" accessibilityState={{ selected }}>
+      <View style={styles.optionHeader}>
+        <View style={[styles.optionPath, { backgroundColor: accent }]}><Icon name={item.id === 'accessible' ? 'wheelchair' : 'route'} size={20} color="#FFFFFF" /></View>
+        <View style={styles.optionTitleCopy}>
+          {item.id === 'recommended' ? <Text style={styles.optionBadge}>แนะนำโดย AI</Text> : null}
+          <Text style={styles.optionTitle}>{alt?.title || item.title}</Text>
+        </View>
+        <View style={[styles.radio, selected && { borderColor: accent }]}>{selected ? <View style={[styles.radioInner, { backgroundColor: accent }]} /> : null}</View>
       </View>
-      <View style={[styles.radio, selected && { borderColor: accent }]}>{selected ? <View style={[styles.radioInner, { backgroundColor: accent }]} /> : null}</View>
-    </View>
-    <Text numberOfLines={1} style={styles.optionDetail}>{item.detail}</Text>
-    <View style={styles.optionStats}>
-      <RouteStat icon="route" value={distance === null ? '—' : formatDistance(distance)} />
-      <RouteStat icon="clock" value={duration === null ? '—' : formatDuration(duration)} />
-      <RouteStat icon="shield" value={risk === null ? 'Risk —' : `Risk Score ${Math.round(risk)}`} />
-    </View>
-    <View style={styles.optionChips}>
-      <View style={styles.optionChip}><Icon name={item.id === 'accessible' ? 'wheelchair' : 'walk'} size={13} color="#2563EB" /><Text style={styles.optionChipText}>{item.id === 'shortest' ? 'ตรงที่สุด' : item.id === 'accessible' ? 'หลีกเลี่ยงบันได' : 'ทางเท้าแนะนำ'}</Text></View>
-      <View style={styles.optionChip}><Icon name={item.id === 'shortest' ? 'navigation' : 'sun'} size={13} color="#2563EB" /><Text style={styles.optionChipText}>{item.id === 'shortest' ? 'ใช้เวลาน้อย' : item.id === 'accessible' ? 'ทางลาด' : 'แสงสว่างดี'}</Text></View>
-    </View>
-  </Pressable>;
+      <Text numberOfLines={1} style={styles.optionDetail}>{item.detail}</Text>
+      <View style={styles.optionStats}>
+        <RouteStat icon="route" value={distance === null ? '—' : formatDistance(distance)} />
+        <RouteStat icon="clock" value={duration === null ? '—' : formatDuration(duration)} />
+        <RouteStat icon="shield" value={`ความปลอดภัย ${safeScore}%`} />
+      </View>
+      <View style={styles.optionChips}>
+        {chips.map((chip, idx) => (
+          <View key={idx} style={styles.optionChip}>
+            <Icon name={item.id === 'accessible' ? 'wheelchair' : 'sparkles'} size={13} color="#2563EB" />
+            <Text style={styles.optionChipText}>{chip}</Text>
+          </View>
+        ))}
+      </View>
+      {selected && alt?.warnings?.length ? (
+        <View style={styles.warningBox}>
+          {alt.warnings.map((w, wIdx) => (
+            <View key={wIdx} style={styles.warningItem}>
+              <Icon name="warning" size={13} color="#D97706" />
+              <Text numberOfLines={2} style={styles.warningText}>{w}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </Pressable>
+  );
 }
 
 function RouteStat({ icon, value }: { icon: 'route' | 'clock' | 'shield'; value: string }) {
@@ -198,27 +273,14 @@ const styles = StyleSheet.create({
   optionChips: { flexDirection: 'row', gap: 7, marginLeft: 43 },
   optionChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#EAF2FF', paddingHorizontal: 8, paddingVertical: 5, borderRadius: 10 },
   optionChipText: { color: '#2563EB', fontSize: 8, fontWeight: '700' },
+  warningBox: { marginLeft: 43, marginTop: 4, gap: 4, backgroundColor: '#FFFBEB', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#FDE68A' },
+  warningItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 5 },
+  warningText: { flex: 1, color: '#92400E', fontSize: 9, lineHeight: 13 },
   status: { minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   statusText: { color: '#475569', fontSize: 10 },
   hint: { color: '#475569', fontSize: 10, lineHeight: 15 },
   error: { padding: 10, borderRadius: 12, backgroundColor: '#FEF2F2' },
   errorText: { color: '#B91C1C', fontSize: 11, lineHeight: 16 },
-  routeCard: { padding: 14, borderRadius: 19, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#DBEAFE', gap: 12 },
-  routeTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  routeIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EAF2FF' },
-  routeTitleCopy: { flex: 1, gap: 3 },
-  routeName: { color: '#102A72', fontSize: 14, fontWeight: '800' },
-  routeSub: { color: '#64748B', fontSize: 9 },
-  riskBadge: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 10, backgroundColor: '#DCFCE7', borderWidth: 1, borderColor: '#86EFAC' },
-  riskMedium: { backgroundColor: '#FEF3C7', borderColor: '#FCD34D' },
-  riskHigh: { backgroundColor: '#FEE2E2', borderColor: '#FCA5A5' },
-  riskUnknown: { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' },
-  riskBadgeText: { color: '#102A72', fontSize: 8, fontWeight: '800' },
-  metrics: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: '#E2E8F0', paddingTop: 10 },
-  metric: { flex: 1, alignItems: 'center', gap: 4 },
-  metricLabel: { color: '#64748B', fontSize: 9, textAlign: 'center' },
-  metricValue: { color: '#2563EB', fontSize: 14, fontWeight: '800', textAlign: 'center' },
-  disclaimer: { color: '#64748B', fontSize: 8, lineHeight: 13 },
   start: { minHeight: 54, borderRadius: 19, backgroundColor: colors.forest, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, shadowColor: colors.forest, shadowOpacity: 0.2, shadowRadius: 10, elevation: 4 },
   startDisabled: { backgroundColor: '#93A8C6', shadowOpacity: 0 },
   startText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },

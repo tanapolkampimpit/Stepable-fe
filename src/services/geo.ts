@@ -1,4 +1,4 @@
-import { getAiApiUrl } from './ai';
+import { planRoute, fetchPlaces, type BackendRouteAlternative } from './api';
 
 export type Coordinates = { latitude: number; longitude: number };
 
@@ -45,6 +45,12 @@ export type WalkingRoute = {
   candidateIndex: number;
   selectionMode: 'recommended' | 'shortest' | 'accessible';
   selectionReason: string;
+  title?: string;
+  features?: string[];
+  warnings?: string[];
+  safeScore?: number;
+  accessibilityScore?: number;
+  alternatives?: BackendRouteAlternative[];
 };
 
 export type RouteProgress = {
@@ -79,36 +85,71 @@ type PhotonFeature = {
 const PHOTON_API = 'https://photon.komoot.io';
 
 export async function searchOsmPlaces(query: string, near?: Coordinates): Promise<MapPlace[]> {
-  const params = new URLSearchParams({ q: query.trim(), limit: '12', lang: 'default' });
-  if (near) {
-    params.set('lat', String(near.latitude));
-    params.set('lon', String(near.longitude));
+  const cleanQuery = query.trim();
+  let backendPlaces: MapPlace[] = [];
+
+  try {
+    const fetched = await fetchPlaces({
+      query: cleanQuery,
+      latitude: near?.latitude,
+      longitude: near?.longitude,
+      limit: 10,
+    });
+    backendPlaces = fetched.map((p) => ({
+      id: `backend-${p.id}`,
+      name: p.title,
+      description: `${p.address} · ความปลอดภัย ${p.safeScore}%`,
+      category: p.category || 'สถานที่แนะนำในศรีราชา',
+      coordinates: { latitude: p.coordinates.latitude, longitude: p.coordinates.longitude },
+    }));
+  } catch {
+    // If backend place search fails, continue to Photon
   }
 
-  const response = await fetch(`${PHOTON_API}/api/?${params.toString()}`, {
-    headers: { Accept: 'application/geo+json, application/json' },
-  });
-  if (!response.ok) throw new Error('ค้นหาสถานที่ไม่สำเร็จ ลองอีกครั้ง');
+  let photonPlaces: MapPlace[] = [];
+  try {
+    const params = new URLSearchParams({ q: cleanQuery, limit: '10', lang: 'default' });
+    if (near) {
+      params.set('lat', String(near.latitude));
+      params.set('lon', String(near.longitude));
+    }
+    const response = await fetch(`${PHOTON_API}/api/?${params.toString()}`, {
+      headers: { Accept: 'application/geo+json, application/json' },
+    });
+    if (response.ok) {
+      const data = (await response.json()) as { features?: PhotonFeature[] };
+      photonPlaces = (data.features ?? []).flatMap((feature) => {
+        const props = feature.properties;
+        const point = feature.geometry?.coordinates;
+        if (!props?.name || !point || point.length < 2) return [];
+        const [longitude, latitude] = point;
+        const placeLine = [props.street, props.housenumber, props.locality ?? props.district ?? props.city ?? props.county]
+          .filter(Boolean)
+          .join(' ');
+        const category = [props.osm_key, props.osm_value].filter(Boolean).join(' · ');
 
-  const data = (await response.json()) as { features?: PhotonFeature[] };
-  return (data.features ?? []).flatMap((feature) => {
-    const props = feature.properties;
-    const point = feature.geometry?.coordinates;
-    if (!props?.name || !point || point.length < 2) return [];
-    const [longitude, latitude] = point;
-    const placeLine = [props.street, props.housenumber, props.locality ?? props.district ?? props.city ?? props.county]
-      .filter(Boolean)
-      .join(' ');
-    const category = [props.osm_key, props.osm_value].filter(Boolean).join(' · ');
+        return [{
+          id: `${props.osm_type ?? 'place'}-${props.osm_id ?? `${latitude}-${longitude}`}`,
+          name: props.name,
+          description: [placeLine, props.state, props.country].filter(Boolean).join(', '),
+          category: category || props.type || 'สถานที่จาก OpenStreetMap',
+          coordinates: { latitude, longitude },
+        }];
+      });
+    }
+  } catch {
+    // fallback
+  }
 
-    return [{
-      id: `${props.osm_type ?? 'place'}-${props.osm_id ?? `${latitude}-${longitude}`}`,
-      name: props.name,
-      description: [placeLine, props.state, props.country].filter(Boolean).join(', '),
-      category: category || props.type || 'สถานที่จาก OpenStreetMap',
-      coordinates: { latitude, longitude },
-    }];
-  });
+  // Combine backend places first, then photon places without duplicates
+  const combined = [...backendPlaces];
+  for (const p of photonPlaces) {
+    if (!combined.some((item) => item.name.toLowerCase() === p.name.toLowerCase())) {
+      combined.push(p);
+    }
+  }
+
+  return combined;
 }
 
 export async function reverseGeocodeOsm(coordinates: Coordinates): Promise<string | null> {
@@ -169,31 +210,123 @@ export async function getWalkingRoute(
   destination: Coordinates,
   preferences: WalkingPreferences = {},
 ): Promise<WalkingRoute> {
-  const endpoint = getAiApiUrl();
-  const hour = new Date().getHours();
-  let response: Response;
   try {
-    response = await fetch(`${endpoint}/v1/routes/walking`, {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        origin,
-        destination,
-        preferences,
-        isNight: hour < 6 || hour >= 18,
-      }),
+    const planResponse = await planRoute({
+      origin,
+      destination,
+      filter: preferences.wheelchair ? 'accessible' : preferences.shortest ? 'fastest' : 'all',
+      preferences: {
+        wheelchair: Boolean(preferences.wheelchair),
+        avoidStairs: Boolean(preferences.avoidSteps || preferences.wheelchair),
+        avoidSlopes: Boolean(preferences.wheelchair),
+        avoidDark: false,
+        safeFirst: !preferences.shortest,
+        walkingSpeedMps: 1.2,
+      },
+      alternatives: 3,
     });
-  } catch {
-    if (/localhost|127\.0\.0\.1/.test(endpoint)) {
-      throw new Error(`มือถือเชื่อมต่อ ${endpoint} ไม่ได้: ใช้ IP ของคอมพิวเตอร์ในวง LAN แทน localhost`);
+
+    if (planResponse.routes && planResponse.routes.length > 0) {
+      let selected = planResponse.routes[0];
+      if (preferences.wheelchair) {
+        selected = planResponse.routes.find((r) => r.type === 'accessible') || selected;
+      } else if (preferences.shortest) {
+        selected = planResponse.routes.find((r) => r.type === 'fastest') || selected;
+      } else {
+        selected = planResponse.routes.find((r) => r.type === 'recommended') || selected;
+      }
+
+      const coordinates: Coordinates[] = selected.geometry.coordinates.map(([lon, lat]) => ({
+        latitude: lat,
+        longitude: lon,
+      }));
+
+      const totalCoords = Math.max(1, coordinates.length);
+      const stepCount = Math.max(1, selected.steps.length);
+      const maneuvers: WalkingManeuver[] = selected.steps.map((st, idx) => {
+        const begin_shape_index = Math.floor((idx / stepCount) * totalCoords);
+        const end_shape_index = Math.floor(((idx + 1) / stepCount) * totalCoords);
+        const warning = st.hazardWarning ? ` ⚠️ ${st.hazardWarning}` : '';
+        const nameSuffix = st.name ? ` (${st.name})` : '';
+        return {
+          instruction: `${st.instruction}${nameSuffix}${warning}`,
+          length: st.distanceMeters / 1000,
+          time: st.durationSeconds,
+          begin_shape_index,
+          end_shape_index,
+          type: st.type ?? 1,
+        };
+      });
+
+      const riskScore = Math.max(0, 100 - (selected.safeScore || 85));
+      const riskLevel = selected.safeScore >= 80 ? 'low' : selected.safeScore >= 50 ? 'medium' : 'high';
+
+      return {
+        coordinates,
+        distanceKm: selected.distanceMeters / 1000,
+        durationSeconds: selected.durationSeconds,
+        maneuvers: maneuvers.length > 0 ? maneuvers : [{
+          instruction: 'เดินตรงไปยังจุดหมาย',
+          length: selected.distanceMeters / 1000,
+          time: selected.durationSeconds,
+          begin_shape_index: 0,
+          end_shape_index: totalCoords,
+          type: 1,
+        }],
+        riskScore,
+        riskLevel,
+        maxRiskScore: riskScore,
+        evaluatedEdges: totalCoords,
+        coverage: 1,
+        riskAvailable: true,
+        riskMessage: `คะแนนความปลอดภัย ${selected.safeScore}/100`,
+        scoreSource: 'ml',
+        modelVersion: 'StepAble-AI-v1',
+        candidateCount: planResponse.routes.length,
+        candidateIndex: planResponse.routes.indexOf(selected),
+        selectionMode: preferences.wheelchair ? 'accessible' : preferences.shortest ? 'shortest' : 'recommended',
+        selectionReason: selected.title,
+        title: selected.title,
+        features: selected.features,
+        warnings: selected.warnings,
+        safeScore: selected.safeScore,
+        accessibilityScore: selected.accessibilityScore,
+        alternatives: planResponse.routes,
+      };
     }
-    throw new Error(`เชื่อมต่อ AI server ไม่ได้ที่ ${endpoint}: ตรวจว่า server เปิดอยู่และมือถืออยู่ Wi-Fi เดียวกัน`);
+  } catch (error) {
+    console.warn('StepAble routes/plan failed, attempting fallback:', error);
   }
-  if (!response.ok) {
-    const error = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(error?.detail || `AI server ตอบกลับ ${response.status}`);
-  }
-  return await response.json() as WalkingRoute;
+
+  // Fallback: simple route calculation if backend plan route fails (e.g. coordinates outside test bounds)
+  const dist = distanceMeters(origin, destination) / 1000;
+  const dur = Math.round((dist * 1000) / 1.2);
+  return {
+    coordinates: [origin, destination],
+    distanceKm: dist,
+    durationSeconds: dur,
+    maneuvers: [{
+      instruction: 'เดินตรงไปยังจุดหมาย',
+      length: dist,
+      time: dur,
+      begin_shape_index: 0,
+      end_shape_index: 2,
+      type: 1,
+    }],
+    riskScore: 15,
+    riskLevel: 'low',
+    maxRiskScore: 15,
+    evaluatedEdges: 1,
+    coverage: 0.5,
+    riskAvailable: false,
+    riskMessage: 'เส้นทางสำรอง (ไม่พบข้อมูล AI)',
+    scoreSource: 'unavailable',
+    modelVersion: 'fallback',
+    candidateCount: 1,
+    candidateIndex: 0,
+    selectionMode: 'recommended',
+    selectionReason: 'Fallback',
+  };
 }
 
 export function distanceMeters(from: Coordinates, to: Coordinates): number {

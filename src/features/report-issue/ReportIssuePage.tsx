@@ -8,6 +8,7 @@ import { PageHeader } from '../../components/layout/PageHeader';
 import { Screen } from '../../components/layout/Screen';
 import { useAppData } from '../../providers/app-data';
 import { distanceMeters, reverseGeocodeOsm, type Coordinates } from '../../services/geo';
+import { submitReport as apiSubmitReport, uploadReportPhoto, thaiToCategory, thaiToSeverity } from '../../services/api';
 import { colors } from '../../theme';
 
 const issueTypes = ['ทางเท้าชำรุด', 'สิ่งกีดขวาง', 'ทางมืด', 'ไม่มีทางลาด', 'ฝาท่อชำรุด', 'ทางม้าลายอันตราย'];
@@ -15,7 +16,7 @@ const severities = ['ต่ำ', 'ปานกลาง', 'สูง'] as const;
 
 export default function ReportIssuePage() {
   const { lat, lon, image } = useLocalSearchParams<{ lat?: string; lon?: string; image?: string }>();
-  const { location, placeLabel, locationMessage, isLocating, refreshLocation, addReport } = useAppData();
+  const { location, placeLabel, locationMessage, isLocating, refreshLocation, addReport, refreshReports } = useAppData();
   const [issue, setIssue] = useState(issueTypes[0]);
   const [severity, setSeverity] = useState<(typeof severities)[number]>('ปานกลาง');
   const [description, setDescription] = useState('');
@@ -81,11 +82,54 @@ export default function ReportIssuePage() {
     setBusy(true);
     setNotice('');
     try {
-      await addReport({ type: issue, severity, description: description.trim(), coordinates, ...(imageUri ? { imageUri } : {}) });
-      Alert.alert('บันทึกรายงานแล้ว', 'รายงานถูกบันทึกไว้ในอุปกรณ์นี้ แต่ยังไม่ได้ส่งไปยังเซิร์ฟเวอร์หรือผู้ใช้อื่น');
+      let uploadedPhotoUrl: string | null = null;
+      if (imageUri) {
+        setNotice('กำลังอัปโหลดรูปภาพไปยังเซิร์ฟเวอร์ StepAble…');
+        try {
+          const uploadRes = await uploadReportPhoto(imageUri);
+          uploadedPhotoUrl = uploadRes.publicUrl;
+        } catch (uploadErr) {
+          console.warn('Upload photo failed, continuing without photo URL:', uploadErr);
+        }
+      }
+
+      setNotice('กำลังส่งรายงานปัญหาไปยัง StepAble API…');
+      let serverReportId: string | undefined;
+      try {
+        const created = await apiSubmitReport({
+          category: thaiToCategory(issue),
+          severity: thaiToSeverity(severity),
+          title: issue,
+          description: description.trim() || undefined,
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude,
+          photoUrl: uploadedPhotoUrl,
+        });
+        serverReportId = created.id;
+      } catch (apiErr) {
+        console.warn('Backend submit failed, saving locally:', apiErr);
+      }
+
+      await addReport({
+        type: issue,
+        severity,
+        description: description.trim(),
+        coordinates,
+        ...(uploadedPhotoUrl || imageUri ? { imageUri: (uploadedPhotoUrl || imageUri) as string } : {}),
+        status: serverReportId ? 'submitted' : undefined,
+      });
+
+      void refreshReports();
+
+      Alert.alert(
+        'ส่งรายงานปัญหาสำเร็จ',
+        serverReportId
+          ? 'ข้อมูลปัญหาถูกส่งไปยัง StepAble API เรียบร้อยแล้ว ขอบคุณที่ร่วมพัฒนาทางเท้าศรีราชา'
+          : 'บันทึกรายงานในอุปกรณ์เรียบร้อยแล้ว (ออฟไลน์)',
+      );
       router.replace('/(tabs)/alerts');
     } catch {
-      setNotice('บันทึกรายงานไม่สำเร็จ พื้นที่จัดเก็บอาจเต็ม ลองอีกครั้ง');
+      setNotice('บันทึกรายงานไม่สำเร็จ โปรดลองอีกครั้ง');
     } finally {
       setBusy(false);
     }
@@ -120,9 +164,9 @@ export default function ReportIssuePage() {
       {imageUri ? <View style={styles.photoPreviewWrap}><Image source={{ uri: imageUri }} style={styles.photoPreview} resizeMode="cover" /><Pressable onPress={() => setImageUri(null)} style={styles.removePhoto} accessibilityRole="button" accessibilityLabel="นำรูปออก"><Icon name="close" size={17} color="#FFFFFF" /></Pressable></View> : null}
       <Pressable onPress={() => { void choosePhoto(); }} style={styles.photoButton} accessibilityRole="button"><Icon name="camera" size={18} color={colors.forest} /><Text style={styles.photoText}>{imageUri ? 'เปลี่ยนรูปภาพ' : 'แนบรูปภาพจากคลัง'}</Text><Icon name="chevron-right" size={17} color={colors.muted} /></Pressable>
       {notice ? <View style={styles.notice}><Icon name="warning" size={17} color={colors.amber} /><Text style={styles.noticeText}>{notice}</Text></View> : null}
-      <View style={styles.warning}><Icon name="info" size={17} color={colors.forest} /><Text style={styles.warningText}>บันทึกไว้ในอุปกรณ์นี้เท่านั้น ยังไม่มีเซิร์ฟเวอร์กลางสำหรับส่งรายงานให้ผู้ใช้อื่น</Text></View>
+      <View style={styles.warning}><Icon name="info" size={17} color={colors.forest} /><Text style={styles.warningText}>ข้อมูลรายงานจะถูกส่งไปยัง StepAble API เพื่อการตรวจสอบและปรับปรุงทางเท้าในพื้นที่</Text></View>
       <Pressable onPress={() => { void submitReport(); }} disabled={busy || !coordinates} style={[styles.submit, (!coordinates || busy) && styles.submitDisabled]} accessibilityRole="button" accessibilityState={{ disabled: busy || !coordinates }}>
-        {busy ? <ActivityIndicator color={colors.paper} /> : <Text style={styles.submitText}>บันทึกรายงาน</Text>}
+        {busy ? <ActivityIndicator color={colors.paper} /> : <Text style={styles.submitText}>ส่งรายงานปัญหา</Text>}
         {!busy ? <Icon name="arrow-right" size={18} color={colors.paper} /> : null}
       </Pressable>
     </Screen>
