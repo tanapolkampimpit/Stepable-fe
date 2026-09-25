@@ -164,7 +164,7 @@ export default function NavigationPage() {
         {notice ? <Text style={styles.message} accessibilityLiveRegion="polite">{notice}</Text> : null}
         {visibleError ? <Pressable onPress={() => { void reroute(); }} style={styles.error} accessibilityRole="button"><Text style={styles.errorText}>{visibleError}{t('navigation.tapToRetry')}</Text></Pressable> : null}
         <View style={styles.actions}>
-          <Pressable onPress={() => { void Speech.stop(); router.push({ pathname: '/(tabs)/ai', params: { live: 'true' } }); }} style={styles.aiButton} accessibilityRole="button"><Icon name="camera" size={20} color="#FFFFFF" /><Text style={styles.aiText}>{t('navigation.openLiveAi')}</Text></Pressable>
+          <Pressable onPress={() => { void Speech.stop(); router.push('/(tabs)/ai'); }} style={styles.aiButton} accessibilityRole="button"><Icon name="camera" size={20} color="#FFFFFF" /><Text style={styles.aiText}>{t('navigation.openLiveAi')}</Text></Pressable>
           <Pressable onPress={() => router.push({ pathname: '/report-issue', params: location ? { lat: String(location.latitude), lon: String(location.longitude) } : {} })} style={styles.report} accessibilityRole="button"><Icon name="warning" size={19} color="#334E7D" /><Text style={styles.reportText}>{t('ai.reportAnIssue')}</Text></Pressable>
         </View>
         <View style={styles.endRow}>

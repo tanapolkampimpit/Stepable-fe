@@ -4,8 +4,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as Location from 'expo-location';
 import { distanceMeters, reverseGeocodeOsm, type Coordinates } from '../../services/geo';
-import { fetchCurrentWeather, fetchReports } from '../../services/api';
+import { fetchCurrentWeather, fetchReports, resolveReportPhotoUrl } from '../../services/api';
 import { AppDataContext } from './AppDataContext';
+import { FontScaleContext } from './FontScaleContext';
 import { DEFAULT_PREFERENCES, STORAGE_KEYS } from './constants';
 import type {
   AppDataValue,
@@ -212,7 +213,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const refreshReports = useCallback(async () => {
     try {
       const serverReports = await fetchReports({ limit: 100 });
+      const existing = reportsRef.current;
       const mappedServerReports: LocalReport[] = serverReports.map((item) => {
+        const savedOnDevice = existing.find((report) => report.id === item.id);
         let issueType: IssueType = 'damaged_sidewalk';
         if (item.category === 'obstacle') issueType = 'obstacle';
         else if (item.category === 'lighting' || item.category === 'poor_lighting') issueType = 'poor_lighting';
@@ -229,13 +232,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           description: item.description || item.title || '',
           coordinates: { latitude: item.latitude, longitude: item.longitude },
           createdAt: item.createdAt,
-          imageUri: item.photoUrl || undefined,
+          imageUri: resolveReportPhotoUrl(item.photoUrl) ?? savedOnDevice?.imageUri,
+          localImageUri: savedOnDevice?.localImageUri,
           status: item.status,
         };
       });
 
       // Combine with local unsynced reports by ID deduplication
-      const existing = reportsRef.current;
       const combined = [...mappedServerReports];
       for (const loc of existing) {
         if (!combined.some((c) => c.id === loc.id)) {
@@ -292,9 +295,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     setSavedPlaces((previous) => previous.filter((item) => item.id !== id));
   }, []);
 
-  const addReport = useCallback(async (report: Omit<LocalReport, 'id' | 'createdAt'>) => {
-    const savedReport: LocalReport = { ...report, id: `${Date.now()}`, createdAt: new Date().toISOString() };
-    const nextReports = [savedReport, ...reportsRef.current];
+  const addReport = useCallback(async (report: Omit<LocalReport, 'id' | 'createdAt'> & { id?: string; createdAt?: string }) => {
+    const savedReport: LocalReport = { ...report, id: report.id ?? `${Date.now()}`, createdAt: report.createdAt ?? new Date().toISOString() };
+    const nextReports = [savedReport, ...reportsRef.current.filter((item) => item.id !== savedReport.id)];
     reportsRef.current = nextReports;
     setReports(nextReports);
     await AsyncStorage.setItem(STORAGE_KEYS.reports, JSON.stringify(nextReports));
@@ -327,5 +330,5 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     savePlace, removeSavedPlace, reports, refreshReports, addReport, navigationPlan,
   ]);
 
-  return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
+  return <FontScaleContext.Provider value={preferences.fontScale}><AppDataContext.Provider value={value}>{children}</AppDataContext.Provider></FontScaleContext.Provider>;
 }

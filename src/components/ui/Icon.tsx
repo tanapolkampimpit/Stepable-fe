@@ -8,6 +8,7 @@ export type IconName =
   | 'sparkles'
   | 'user'
   | 'pin'
+  | 'pin-filled'
   | 'locate'
   | 'plus'
   | 'minus'
@@ -37,12 +38,22 @@ export type IconName =
   | 'globe'
   | 'briefcase'
   | 'graduation'
+  | 'hospital'
+  | 'plane'
+  | 'bus'
+  | 'train'
+  | 'shopping'
+  | 'coffee'
   | 'swap'
   | 'navigation'
   | 'flag'
   | 'info'
   | 'walk'
   | 'crosswalk'
+  | 'drain'
+  | 'sidewalk-damage'
+  | 'traffic-cone'
+  | 'streetlight'
   | 'park'
   | 'flashlight'
   | 'refresh'
@@ -60,6 +71,7 @@ const paths: Record<IconName, string[]> = {
   sparkles: ['m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z', 'm19 14 .9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9L19 14Z', 'M5 3v3', 'M3.5 4.5h3'],
   user: ['M20 21a8 8 0 0 0-16 0', 'M12 13a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z'],
   pin: ['M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z', 'M12 10a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z'],
+  'pin-filled': ['M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z', 'M12 10a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z'],
   locate: ['M12 2v3', 'M12 19v3', 'M2 12h3', 'M19 12h3', 'M12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12Z', 'M12 12h.01'],
   plus: ['M12 5v14', 'M5 12h14'],
   minus: ['M5 12h14'],
@@ -89,12 +101,22 @@ const paths: Record<IconName, string[]> = {
   globe: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z', 'M2 12h20', 'M12 2c3 3 4 6 4 10s-1 7-4 10c-3-3-4-6-4-10s1-7 4-10Z'],
   briefcase: ['M4 7h16v13H4Z', 'M9 7V4h6v3', 'M4 12h16', 'M10 12v2h4v-2'],
   graduation: ['m2 10 10-5 10 5-10 5Z', 'M6 12v5c3 2 9 2 12 0v-5', 'M22 10v6'],
+  hospital: ['M4 21V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v16', 'M2 21h20', 'M12 6v8', 'M8 10h8', 'M9 21v-4h6v4'],
+  plane: ['m2 16 9-4V4a2 2 0 0 1 4 0v8l7 4v3l-9-2-9 2v-3Z', 'M13 17v4'],
+  bus: ['M5 17V6a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v11H5Z', 'M5 11h14', 'M7 20v2', 'M17 20v2', 'M8 15h.01', 'M16 15h.01'],
+  train: ['M6 17V5a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v12H6Z', 'M6 11h12', 'M9 15h.01', 'M15 15h.01', 'm8 17-3 5', 'm16 17 3 5', 'M8 22h8'],
+  shopping: ['M3 8h18l-2 13H5L3 8Z', 'M8 9V6a4 4 0 0 1 8 0v3'],
+  coffee: ['M4 8h13v8a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8Z', 'M17 9h2a3 3 0 0 1 0 6h-2', 'M7 3v2', 'M12 3v2'],
   swap: ['M7 7h12l-3-3', 'm19 7-3 3', 'M17 17H5l3 3', 'm5 17 3-3'],
   navigation: ['m3 11 18-8-8 18-2-8Z'],
   flag: ['M5 22V4', 'M5 4h12l-2 4 2 4H5'],
   info: ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z', 'M12 10v7', 'M12 7h.01'],
   walk: ['M13 5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z', 'm10 22 2-7 3 3v4', 'm7 22 2-8-3-3', 'm9 8 4 3 4-1'],
   crosswalk: ['M12 5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z', 'm9 22 2-7 3 3v4', 'm6 22 3-8-3-3', 'm9 8 4 3 4-1', 'M2 4h4', 'M18 4h4', 'M2 20h3', 'M19 20h3'],
+  drain: ['M5 7h14', 'M5 12h14', 'M5 17h14', 'M8 7v10', 'M16 7v10'],
+  'sidewalk-damage': ['M3 14h6l2-3 3 3h7v7H3v-7Z', 'M4 14V8h7l2-5h7', 'm12 6-3 5 4 3-3 5', 'M15 3h5'],
+  'traffic-cone': ['M10 3h4l5 16H5l5-16Z', 'M3 21h18', 'M8 11h8', 'M7 15h10'],
+  streetlight: ['M5 21V8a6 6 0 0 1 6-6c4 0 7 2 8 6', 'M2 21h7', 'M15 9h7', 'M18 12v2', 'm15 13-2 2', 'm21 13 2 2'],
   park: ['M12 2 7 9h3l-5 7h6v6h2v-6h6l-5-7h3l-5-7Z'],
   flashlight: ['m9 2 6 0 1 5-8 0Z', 'M8 7h8l-1 15H9Z', 'M12 11v6'],
   refresh: ['M20 11a8 8 0 0 0-14.7-4L3 10', 'M3 4v6h6', 'M4 13a8 8 0 0 0 14.7 4L21 14', 'M21 20v-6h-6'],
@@ -107,7 +129,20 @@ const paths: Record<IconName, string[]> = {
 
 type IconProps = { name: IconName; size?: number; color?: string; strokeWidth?: number };
 
+export function getIconPaths(name: IconName): string[] {
+  return paths[name];
+}
+
 export function Icon({ name, size = 20, color = '#18362F', strokeWidth = 1.8 }: IconProps) {
+  if (name === 'pin-filled') {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityRole="image">
+        <Path d={paths[name][0]} fill={color} />
+        <Path d={paths[name][1]} fill="#991B1B" />
+      </Svg>
+    );
+  }
+
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" accessibilityRole="image">
       {paths[name].map((d, index) => <Path key={`${name}-${index}`} d={d} />)}

@@ -150,7 +150,7 @@ export default function RoutesPage() {
         <View style={styles.currentDot} />
         <View style={styles.tripCopy}><Text style={styles.tripLabel}>{t('routes.startGps')}</Text><Text numberOfLines={1} style={styles.tripText}>{location ? t('routes.currentLocation') : t('routes.waitingForLocation')}</Text></View>
         <Icon name="arrow-right" size={18} color="#102A72" />
-        <Icon name="pin" size={20} color="#EF4444" />
+        <Icon name="pin-filled" size={20} color="#DC2626" />
         <Text numberOfLines={1} style={styles.tripDestination}>{placeName || t('routes.noDestinationSelected')}</Text>
       </View>
 

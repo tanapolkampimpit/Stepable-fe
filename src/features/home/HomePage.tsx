@@ -1,6 +1,6 @@
 import { issueLabel, severityLabel } from '../../i18n/reports';
 import { errorMessage, t, useLanguage, useMessageState, message, type TranslationKey } from '../../i18n';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Share, StyleSheet, View } from 'react-native';
 import { AppText as Text } from '../../components/ui/AppText';
 import { router, useFocusEffect } from 'expo-router';
@@ -8,54 +8,183 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, G, Line, Path } from 'react-native-svg';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { OpenStreetMap, type OpenStreetMapHandle, type OSMMapMarker } from '../../components/maps/OpenStreetMap';
-import { useAppData } from '../../providers/app-data';
+import { PlaceDetailsSheet } from '../../components/maps/PlaceDetailsSheet';
+import { ReportDetailsSheet } from '../../components/reports/ReportDetailsSheet';
+import { issueAppearance } from '../../components/reports/reportAppearance';
+import { reportMarkerIconFor } from '../../components/maps/reportMarker';
+import { placeIconForGeoapifyCategories, placeIconForOsmTags, placePriorityForGeoapifyCategories, placePriorityForOsmTags, type PlaceMarkerIcon } from '../../components/maps/placeMarker';
+import { useAppData, type LocalReport } from '../../providers/app-data';
 import { useBottomNavigation } from '../../components/navigation/BottomNavigationContext';
-import { searchOsmPlaces } from '../../services/geo';
+import type { MapBounds } from '../../services/geo';
+import { findImportantOsm, findNearbyOsm, type NearbyCategory } from '../../services/nearbyOsm';
+import { findImportantGeoapify, hasGeoapifyKey } from '../../services/geoapifyPlaces';
+import { intersectsSupportedProvince, isInSupportedProvince } from '../../services/supportedProvinces';
 import { colors } from '../../theme';
 
+const categoryIcons: Record<NearbyCategory, PlaceMarkerIcon> = {
+  ramps: 'wheelchair',
+  crossings: 'crosswalk',
+  parks: 'park',
+};
+
 export default function HomePage() {
-  const categories: { query: string; labelKey: TranslationKey; icon: IconName }[] = [
-    { query: t('home.wheelchairRamp'), labelKey: 'home.ramps', icon: 'wheelchair' },
-    { query: t('home.pedestrianCrossing'), labelKey: 'home.crossings', icon: 'crosswalk' },
-    { query: t('home.parks'), labelKey: 'home.parks', icon: 'park' },
+  const categories: { category: NearbyCategory; labelKey: TranslationKey; icon: IconName; accent: string }[] = [
+    { category: 'ramps', labelKey: 'home.ramps', icon: 'wheelchair', accent: '#2563EB' },
+    { category: 'crossings', labelKey: 'home.crossings', icon: 'crosswalk', accent: '#7C3AED' },
+    { category: 'parks', labelKey: 'home.parks', icon: 'park', accent: '#15803D' },
   ];
   useLanguage();
   const { setCompact } = useBottomNavigation();
-  const { location, placeLabel, locationStatus, locationMessage, isLocating, refreshLocation, weather, weatherMessage, refreshWeather, reports } = useAppData();
+  const { location, placeLabel, locationStatus, locationMessage, isLocating, refreshLocation, weather, refreshWeather, reports } = useAppData();
   const mapRef = useRef<OpenStreetMapHandle>(null);
+  const categoryRequest = useRef(0);
+  const poiRequest = useRef(0);
+  const poiCoverage = useRef<MapBounds | null>(null);
+  const poiCoverageZoom = useRef(0);
+  const poiViewport = useRef<{ bounds: MapBounds; zoom: number } | null>(null);
+  const poiRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const poiDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const poiRetryCount = useRef(0);
   const [places, setPlaces] = useState<OSMMapMarker[]>([]);
+  const [importantPlaces, setImportantPlaces] = useState<OSMMapMarker[]>([]);
+  const [poiStatus, setPoiStatus] = useState<'idle' | 'loading' | 'empty' | 'error'>('idle');
+  const [selectedPlace, setSelectedPlace] = useState<OSMMapMarker | null>(null);
+  const [selectedReport, setSelectedReport] = useState<LocalReport | null>(null);
+  const [activeCategory, setActiveCategory] = useState<NearbyCategory | null>(null);
   const [showReports, setShowReports] = useState(false);
   const [loadingCategory, setLoadingCategory] = useState(false);
   const [mapNotice, setMapNotice] = useMessageState('');
 
   useFocusEffect(useCallback(() => setCompact(false), [setCompact]));
 
+  const loadImportantPlaces = useCallback(function loadImportantPlaces(bounds: MapBounds, zoom: number, retry = false) {
+    const coverage = poiCoverage.current;
+    if (!retry && coverage && zoom < poiCoverageZoom.current + 1.5
+      && bounds.west >= coverage.west && bounds.east <= coverage.east
+      && bounds.south >= coverage.south && bounds.north <= coverage.north) return;
+    if (!retry) poiRetryCount.current = 0;
+    if (poiRetryTimer.current) clearTimeout(poiRetryTimer.current);
+    poiRetryTimer.current = null;
+    const request = ++poiRequest.current;
+    const longitudePadding = (bounds.east - bounds.west) * 0.2;
+    const latitudePadding = (bounds.north - bounds.south) * 0.2;
+    const queryBounds = {
+      west: bounds.west - longitudePadding,
+      south: bounds.south - latitudePadding,
+      east: bounds.east + longitudePadding,
+      north: bounds.north + latitudePadding,
+    };
+    poiCoverage.current = queryBounds;
+    poiCoverageZoom.current = zoom;
+    setPoiStatus('loading');
+    const requestPlaces = hasGeoapifyKey ? findImportantGeoapify(queryBounds) : findImportantOsm(queryBounds);
+    void requestPlaces.then((found) => {
+      if (request !== poiRequest.current) return;
+      poiRetryCount.current = 0;
+      const mapped = found.flatMap((place) => {
+        const geoapifyCategories = 'categories' in place && Array.isArray(place.categories) ? place.categories : [];
+        const placeIcon = placeIconForGeoapifyCategories(geoapifyCategories) ?? placeIconForOsmTags(place.tags);
+        if (!placeIcon || !isInSupportedProvince(place.coordinates)) return [];
+        return [{
+          id: place.id,
+          label: place.name || t('service.openstreetmapPlace'),
+          coordinates: place.coordinates,
+          placeIcon,
+          showLabel: Boolean(place.name),
+          markerKind: 'poi' as const,
+          poiPriority: Math.max(placePriorityForGeoapifyCategories(geoapifyCategories), placePriorityForOsmTags(place.tags)),
+          osmTags: place.tags,
+        }];
+      });
+      if (!mapped.length) poiCoverage.current = null;
+      setImportantPlaces(mapped);
+      setPoiStatus(mapped.length ? 'idle' : 'empty');
+    }).catch(() => {
+      if (request !== poiRequest.current) return;
+      setPoiStatus('error');
+      const delay = Math.min(30000 * 2 ** poiRetryCount.current, 120000);
+      poiRetryCount.current += 1;
+      poiRetryTimer.current = setTimeout(() => loadImportantPlaces(bounds, zoom, true), delay);
+    });
+  }, []);
+
+  const onViewportChange = useCallback((bounds: MapBounds, zoom: number) => {
+    if (poiDebounceTimer.current) clearTimeout(poiDebounceTimer.current);
+    poiViewport.current = { bounds, zoom };
+    if (!intersectsSupportedProvince(bounds)) {
+      poiRequest.current += 1;
+      poiCoverage.current = null;
+      if (poiRetryTimer.current) clearTimeout(poiRetryTimer.current);
+      setImportantPlaces([]);
+      setPoiStatus('idle');
+      return;
+    }
+    if (zoom < 11) {
+      poiRequest.current += 1;
+      poiCoverage.current = null;
+      if (poiRetryTimer.current) clearTimeout(poiRetryTimer.current);
+      setImportantPlaces([]);
+      setPoiStatus('idle');
+      return;
+    }
+    poiDebounceTimer.current = setTimeout(() => loadImportantPlaces(bounds, zoom), 250);
+  }, [loadImportantPlaces]);
+
+  useEffect(() => () => {
+    poiRequest.current += 1;
+    if (poiRetryTimer.current) clearTimeout(poiRetryTimer.current);
+    if (poiDebounceTimer.current) clearTimeout(poiDebounceTimer.current);
+  }, []);
+
   const reportMarkers = reports.map((report) => ({
     id: report.id,
     label: `${issueLabel(report.type)} · ${severityLabel(report.severity)}`,
     coordinates: report.coordinates,
-    color: report.severity === 'high' ? '#dc2626' : report.severity === 'medium' ? '#f97316' : '#eab308',
+    color: issueAppearance[report.type].color,
+    reportIcon: reportMarkerIconFor(report.type),
   }));
-  const visibleMarkers = showReports ? [...places, ...reportMarkers] : places;
+  const categoryIds = new Set(places.map((place) => place.id));
+  const visibleMarkers: OSMMapMarker[] = [
+    ...importantPlaces.filter((place) => !categoryIds.has(place.id)),
+    ...places,
+    ...(showReports ? reportMarkers : []),
+  ];
 
-  const showCategory = async (query: string, labelKey: TranslationKey) => {
+  const showCategory = async (category: NearbyCategory, labelKey: TranslationKey) => {
+    const request = ++categoryRequest.current;
+    setActiveCategory(category);
+    setPlaces([]);
     setLoadingCategory(true);
     setMapNotice(message('home.searchingOpenstreetmapFor', { value0: message(labelKey) }));
     try {
       const near = location ?? await refreshLocation();
       if (!near) {
-        setMapNotice(message('home.allowGpsAccessToSearchNearYour'));
+        if (request === categoryRequest.current) setMapNotice(message('home.allowGpsAccessToSearchNearYour'));
         return;
       }
-      const found = await searchOsmPlaces(query, near);
-      const mapped = found.map((place) => ({ id: place.id, label: place.name, coordinates: place.coordinates, color: '#2563eb' }));
+      const bounds = poiViewport.current?.bounds ?? {
+        west: near.longitude - 0.05,
+        south: near.latitude - 0.05,
+        east: near.longitude + 0.05,
+        north: near.latitude + 0.05,
+      };
+      const found = await findNearbyOsm(category, bounds, near, t(labelKey));
+      if (request !== categoryRequest.current) return;
+      const mapped = found.map((place) => ({
+        id: place.id,
+        label: place.name,
+        coordinates: place.coordinates,
+        placeIcon: categoryIcons[category],
+        showLabel: place.name !== t(labelKey),
+        osmTags: place.osmTags,
+      }));
       setPlaces(mapped);
       setMapNotice(mapped.length ? message('home.foundPlacesTapAPinForIts', { value0: mapped.length }) : message('home.noFoundNearby', { value0: message(labelKey) }));
-      if (mapped[0]) mapRef.current?.centerOn(mapped[0].coordinates);
+      if (!mapped.length) mapRef.current?.centerOn(near);
     } catch (error) {
-      setMapNotice(errorMessage(error, 'home.couldNotFindPlaces'));
+      if (request === categoryRequest.current) setMapNotice(errorMessage(error, 'home.couldNotFindPlaces'));
     } finally {
-      setLoadingCategory(false);
+      if (request === categoryRequest.current) setLoadingCategory(false);
     }
   };
 
@@ -85,9 +214,18 @@ export default function HomePage() {
   };
 
   const weatherText = weather ? `${Math.round(weather.temperature)}°C · ${weatherLabel(weather.code)}` : locationStatus === 'denied' ? 'Enable GPS' : 'Loading weather';
+  const openMarker = (markerId: string) => {
+    const report = reports.find((item) => item.id === markerId);
+    if (report) {
+      setSelectedReport(report);
+      return;
+    }
+    const selected = visibleMarkers.find((marker) => marker.id === markerId && marker.placeIcon);
+    if (selected) setSelectedPlace(selected);
+  };
   return (
     <View style={styles.screen}>
-      <OpenStreetMap ref={mapRef} center={location} userLocation={location} markers={visibleMarkers} style={styles.map} />
+      <OpenStreetMap ref={mapRef} center={location} userLocation={location} markers={visibleMarkers} fitCoordinates={places.map((place) => place.coordinates)} onMarkerPress={openMarker} onViewportChange={onViewportChange} style={styles.map} />
       <SafeAreaView edges={['top', 'left', 'right']} style={styles.overlay} pointerEvents="box-none">
         <View style={styles.topRow}>
           <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.pill} accessibilityRole="button" accessibilityLabel={t('home.searchOrChooseAPlace')}>
@@ -116,15 +254,19 @@ export default function HomePage() {
           <Pressable onPress={() => router.push('/(tabs)/search')} style={styles.searchButton} accessibilityRole="button" accessibilityLabel={t('common.search')}><Icon name="search" size={22} color="#FFFFFF" /></Pressable>
         </View>
         <View style={styles.categories}>
-          {categories.map((category) => <CategoryButton key={category.labelKey} icon={category.icon} label={t(category.labelKey)} onPress={() => { void showCategory(category.query, category.labelKey); }} />)}
+          {categories.map((item) => <CategoryButton key={item.category} icon={item.icon} label={t(item.labelKey)} accent={item.accent} selected={activeCategory === item.category} loading={loadingCategory && activeCategory === item.category} onPress={() => { void showCategory(item.category, item.labelKey); }} />)}
         </View>
+        {poiStatus === 'error' ? <Pressable style={styles.poiNotice} onPress={() => { if (poiViewport.current) loadImportantPlaces(poiViewport.current.bounds, poiViewport.current.zoom, true); }} accessibilityRole="button" accessibilityLabel={t('home.poiLoadFailedRetry')}>
+          <Text style={styles.poiNoticeText}>{t('home.poiLoadFailedRetry')}</Text>
+        </Pressable> : null}
+        {poiStatus === 'loading' && importantPlaces.length === 0 ? <View style={styles.poiNotice}><ActivityIndicator size="small" color={colors.forest} /><Text style={styles.poiNoticeText}>{t('home.loadingMapPlaces')}</Text></View> : null}
+        {poiStatus === 'empty' ? <View style={styles.poiNotice}><Text style={styles.poiNoticeText}>{t('home.noMappedPlacesHere')}</Text></View> : null}
         {!mapNotice && (locationStatus === 'denied' || locationStatus === 'error') ? (
           <Pressable onPress={() => { void refreshLocation(); }} style={styles.notice} accessibilityRole="button">
             <Text numberOfLines={2} style={styles.noticeText}>{locationMessage}</Text>
           </Pressable>
         ) : null}
         {mapNotice ? <View style={styles.notice}><Text numberOfLines={2} style={styles.noticeText}>{mapNotice}</Text></View> : null}
-        {loadingCategory ? <ActivityIndicator style={styles.activity} color={colors.forest} /> : null}
         <View style={styles.mapRail}>
           <View style={styles.railGroup}>
             <RailButton icon="locate" label={isLocating ? t('home.updatingLocation') : t('home.showCurrentLocation')} onPress={() => { void centerOnUser(); }} />
@@ -138,17 +280,24 @@ export default function HomePage() {
             <RailButton icon="warning" label={t('home.reportASidewalkIssue')} onPress={() => router.push('/report-issue')} />
           </View>
         </View>
-        <Pressable onPress={() => { void updateWeather(); }} style={styles.sourceNote} accessibilityRole="button" accessibilityLabel={weatherMessage}>
-          <Text style={styles.sourceText}>© OpenStreetMap · {weatherMessage}</Text>
-        </Pressable>
       </SafeAreaView>
+      <PlaceDetailsSheet place={selectedPlace} userLocation={location} onClose={() => setSelectedPlace(null)} onRoute={(place) => {
+        setSelectedPlace(null);
+        router.push({ pathname: '/(tabs)/routes', params: { destination: place.label, lat: String(place.coordinates.latitude), lon: String(place.coordinates.longitude) } });
+      }} />
+      <ReportDetailsSheet report={selectedReport} onClose={() => setSelectedReport(null)} onRoute={(report) => {
+        setSelectedReport(null);
+        router.push({ pathname: '/(tabs)/routes', params: { destination: issueLabel(report.type), lat: String(report.coordinates.latitude), lon: String(report.coordinates.longitude) } });
+      }} />
     </View>
   );
 }
 
-function CategoryButton({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
+function CategoryButton({ icon, label, accent, selected, loading, onPress }: { icon: IconName; label: string; accent: string; selected: boolean; loading: boolean; onPress: () => void }) {
   useLanguage();
-  return <Pressable onPress={onPress} style={styles.categoryButton} accessibilityRole="button" accessibilityLabel={t('home.searchFor', { value0: label })}><Icon name={icon} size={20} color="#174589" /></Pressable>;
+  return <Pressable onPress={onPress} style={({ pressed }) => [styles.categoryButton, selected && { backgroundColor: accent }, pressed && styles.categoryButtonPressed]} accessibilityRole="button" accessibilityState={{ selected, busy: loading }} accessibilityLabel={t('home.searchFor', { value0: label })}>
+    {loading ? <ActivityIndicator size="small" color={selected ? '#FFFFFF' : accent} /> : <Icon name={icon} size={21} color={selected ? '#FFFFFF' : accent} strokeWidth={2} />}
+  </Pressable>;
 }
 
 function RailButton({ icon, label, onPress, primary = false, selected = false }: { icon: IconName; label: string; onPress: () => void; primary?: boolean; selected?: boolean }) {
@@ -245,8 +394,11 @@ const styles = StyleSheet.create({
   searchMain: { flex: 1, minWidth: 0, height: '100%', flexDirection: 'row', alignItems: 'center', gap: 10 },
   searchValue: { flex: 1, color: '#5572A4', fontSize: 13, fontWeight: '600' },
   searchButton: { width: 50, height: 50, borderRadius: 25, backgroundColor: colors.forest, alignItems: 'center', justifyContent: 'center' },
-  categories: { flexDirection: 'row', justifyContent: 'center', gap: 22, marginTop: 14 },
-  categoryButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F172A', shadowOpacity: 0.1, shadowRadius: 9, elevation: 4 },
+  categories: { flexDirection: 'row', alignSelf: 'center', gap: 18, marginTop: 14 },
+  categoryButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F172A', shadowOpacity: 0.12, shadowRadius: 9, elevation: 4 },
+  categoryButtonPressed: { opacity: 0.78 },
+  poiNotice: { marginTop: 10, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 7, maxWidth: '90%', paddingVertical: 7, paddingHorizontal: 11, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.96)' },
+  poiNoticeText: { color: '#174589', fontSize: 12, fontWeight: '700', textAlign: 'center' },
   mapRail: { position: 'absolute', right: 14, bottom: 45, alignItems: 'center', gap: 14 },
   railGroup: { borderRadius: 25, backgroundColor: 'rgba(255,255,255,0.96)', padding: 5, gap: 5, shadowColor: '#0F172A', shadowOpacity: 0.12, shadowRadius: 12, elevation: 6 },
   railButton: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#EAF2FF', alignItems: 'center', justifyContent: 'center' },
@@ -254,7 +406,4 @@ const styles = StyleSheet.create({
   selectedRail: { backgroundColor: '#DBEAFE', borderWidth: 1, borderColor: '#2563EB' },
   notice: { marginTop: 8, alignSelf: 'flex-start', maxWidth: '76%', paddingVertical: 7, paddingHorizontal: 11, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.95)' },
   noticeText: { color: '#334155', fontSize: 10, lineHeight: 14 },
-  activity: { position: 'absolute', top: 200, alignSelf: 'center' },
-  sourceNote: { position: 'absolute', left: 14, right: 88, bottom: 4, paddingVertical: 4, paddingHorizontal: 6, borderRadius: 8, alignSelf: 'flex-start', backgroundColor: 'rgba(255,255,255,0.88)' },
-  sourceText: { fontSize: 8, color: '#334155' },
 });

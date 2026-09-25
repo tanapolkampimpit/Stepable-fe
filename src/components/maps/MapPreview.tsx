@@ -10,6 +10,7 @@ type MapPreviewProps = {
   userLocation?: Coordinates | null;
   destination?: OSMMapMarker | null;
   markers?: OSMMapMarker[];
+  onMarkerPress?: (markerId: string) => void;
   route?: Coordinates[];
 };
 

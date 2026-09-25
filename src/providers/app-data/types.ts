@@ -26,6 +26,7 @@ export type LocalReport = {
   coordinates: Coordinates;
   createdAt: string;
   imageUri?: string;
+  localImageUri?: string;
   status?: string;
 };
 
@@ -66,7 +67,7 @@ export type AppDataValue = {
   removeSavedPlace: (id: string) => Promise<void>;
   reports: LocalReport[];
   refreshReports: () => Promise<void>;
-  addReport: (report: Omit<LocalReport, 'id' | 'createdAt'>) => Promise<void>;
+  addReport: (report: Omit<LocalReport, 'id' | 'createdAt'> & { id?: string; createdAt?: string }) => Promise<void>;
   navigationPlan: NavigationPlan | null;
   setNavigationPlan: Dispatch<SetStateAction<NavigationPlan | null>>;
 };

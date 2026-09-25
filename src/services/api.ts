@@ -151,11 +151,13 @@ export type RoutePlanResponse = {
  * Returns the base API URL for the StepAble backend.
  * Priority:
  * 1. process.env.EXPO_PUBLIC_API_URL
- * 2. Android emulator: http://10.0.2.2:8000/api/v1
- * 3. Default (Web / iOS / local): http://127.0.0.1:8000/api/v1
+ * 2. Existing EXPO_PUBLIC_AI_API_URL setting when it points to the same backend
+ * 3. Android emulator: http://10.0.2.2:8000/api/v1
+ * 4. Default (Web / iOS / local): http://127.0.0.1:8000/api/v1
  */
 export function getApiBaseUrl(): string {
-  const envUrl = process.env.EXPO_PUBLIC_API_URL?.trim().replace(/\/$/, '');
+  const configuredUrl = process.env.EXPO_PUBLIC_API_URL?.trim() || process.env.EXPO_PUBLIC_AI_API_URL?.trim();
+  const envUrl = configuredUrl && /^https?:\/\//i.test(configuredUrl) ? configuredUrl.replace(/\/$/, '') : '';
   if (envUrl) {
     return envUrl.endsWith('/api/v1') ? envUrl : `${envUrl}/api/v1`;
   }
@@ -163,6 +165,20 @@ export function getApiBaseUrl(): string {
     return 'http://10.0.2.2:8000/api/v1';
   }
   return 'http://127.0.0.1:8000/api/v1';
+}
+
+export function resolveReportPhotoUrl(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const imageUrl = new URL(value, getApiBaseUrl());
+    if (['127.0.0.1', 'localhost', '10.0.2.2'].includes(imageUrl.hostname)) {
+      const backendOrigin = new URL(getApiBaseUrl()).origin;
+      return `${backendOrigin}${imageUrl.pathname}${imageUrl.search}`;
+    }
+    return imageUrl.toString();
+  } catch {
+    return value;
+  }
 }
 
 /**
