@@ -1,12 +1,12 @@
 import { useMemo, type ComponentProps } from 'react';
 import { StyleSheet, Text as NativeText, type TextStyle } from 'react-native';
-import { useAppData } from '../../providers/app-data';
+import { useFontScale } from '../../providers/app-data/FontScaleContext';
 
 type AppTextProps = ComponentProps<typeof NativeText>;
 
 export function AppText({ style, ...props }: AppTextProps) {
-  const { preferences } = useAppData();
-  const scaledStyle = useMemo(() => scaleStyle(style, preferences.fontScale), [preferences.fontScale, style]);
+  const fontScale = useFontScale();
+  const scaledStyle = useMemo(() => scaleStyle(style, fontScale), [fontScale, style]);
   return <NativeText {...props} maxFontSizeMultiplier={1.8} style={scaledStyle} />;
 }
 

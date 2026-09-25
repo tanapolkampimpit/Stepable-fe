@@ -5,7 +5,7 @@ import { BottomNavigation } from '../../components/navigation/BottomNavigation';
 export default function TabLayout() {
   useLanguage();
   return (
-    <Tabs tabBar={(props) => <BottomNavigation {...props} />} screenOptions={{ headerShown: false, tabBarHideOnKeyboard: true }}>
+    <Tabs tabBar={(props) => <BottomNavigation {...props} />} screenOptions={{ headerShown: false, tabBarHideOnKeyboard: true, freezeOnBlur: true }}>
       <Tabs.Screen name="index" options={{ title: t('common.map'), tabBarAccessibilityLabel: t('common.map') }} />
       <Tabs.Screen name="search" options={{ title: t('common.search'), tabBarAccessibilityLabel: t('common.search') }} />
       <Tabs.Screen name="ai" options={{ title: 'AI', tabBarAccessibilityLabel: t('common.aiAssistant') }} />

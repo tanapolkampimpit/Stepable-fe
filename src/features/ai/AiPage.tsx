@@ -1,22 +1,50 @@
-import { detectionDistance, detectionPosition } from '../../i18n/detections';
+import { aiResultLabels, detectionDistance, detectionPosition } from '../../i18n/detections';
 import { errorMessage, t, useLanguage, useMessageState } from '../../i18n';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Image, Pressable, Share, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Image, PanResponder, Pressable, Share, StyleSheet, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
 import { CameraView, useCameraPermissions, type CameraType } from 'expo-camera';
-import { router, useLocalSearchParams } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { router, useFocusEffect, useIsFocused } from 'expo-router';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
 import { Icon } from '../../components/ui/Icon';
 import { AppText as Text } from '../../components/ui/AppText';
+import { OpenStreetMap, type OpenStreetMapHandle } from '../../components/maps/OpenStreetMap';
 import { useAppData } from '../../providers/app-data';
-import { analyzeImage, type AiAnalysis } from '../../services/ai';
+import { analyzeImage, type AiAnalysis, type AiDetection } from '../../services/ai';
 import { distanceBetweenRouteIndices, distanceMeters, getManeuverInstruction, getRouteProgress } from '../../services/geo';
 import { colors } from '../../theme';
 
+const MINI_MAP_WIDTH = 144;
+const MINI_MAP_HEIGHT = 171;
+const MINI_MAP_MIN_SCALE = 0.75;
+const MINI_MAP_MAX_SCALE = 1.65;
+
+type MiniMapPosition = { left: number; top: number };
+
+function clampMiniMapPosition(left: number, top: number, scale: number, width: number, height: number, insets: { left: number; right: number; top: number; bottom: number }): MiniMapPosition {
+  const minLeft = insets.left + 4;
+  const minTop = insets.top + 4;
+  const maxLeft = Math.max(minLeft, width - insets.right - MINI_MAP_WIDTH * scale - 4);
+  const maxTop = Math.max(minTop, height - insets.bottom - MINI_MAP_HEIGHT * scale - 4);
+  return {
+    left: Math.max(minLeft, Math.min(maxLeft, left)),
+    top: Math.max(minTop, Math.min(maxTop, top)),
+  };
+}
+
+function getPinchDistance(event: GestureResponderEvent) {
+  const [first, second] = event.nativeEvent.touches;
+  if (!first || !second) return 0;
+  return Math.hypot(first.pageX - second.pageX, first.pageY - second.pageY);
+}
+
 export default function AiPage() {
   const { locale } = useLanguage();
-  const { live } = useLocalSearchParams<{ live?: string }>();
+  const isFocused = useIsFocused();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { left: insetLeft, right: insetRight, top: insetTop, bottom: insetBottom } = useSafeAreaInsets();
   const cameraRef = useRef<CameraView>(null);
+  const miniMapRef = useRef<OpenStreetMapHandle>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const { location, navigationPlan } = useAppData();
   const [facing, setFacing] = useState<CameraType>('back');
@@ -26,11 +54,106 @@ export default function AiPage() {
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
   const [analysisError, setAnalysisError] = useMessageState('');
   const [analyzing, setAnalyzing] = useState(false);
-  const [liveMode, setLiveMode] = useState(() => live !== 'false');
+  const [liveMode, setLiveMode] = useState(false);
   const liveBusy = useRef(false);
   const lastAnnouncement = useRef('');
   const lastRouteAnnouncement = useRef('');
   const navigationCueRef = useRef<NavigationCue | null>(null);
+  const lastAlertAt = useRef(0);
+  const miniMapGeometryRef = useRef<{ position: MiniMapPosition | null; scale: number }>({ position: null, scale: 1 });
+  const miniMapGestureStart = useRef<{ left: number; top: number; scale: number; distance: number }>({ left: 0, top: 0, scale: 1, distance: 0 });
+  const [miniMapPosition, setMiniMapPosition] = useState<MiniMapPosition | null>(null);
+  const [miniMapScale, setMiniMapScale] = useState(1);
+  const [miniMapReady, setMiniMapReady] = useState(false);
+  useEffect(() => {
+    if (!isFocused || !permission?.granted || miniMapReady) return;
+    const timer = setTimeout(() => setMiniMapReady(true), 400);
+    return () => clearTimeout(timer);
+  }, [isFocused, miniMapReady, permission?.granted]);
+  useFocusEffect(useCallback(() => () => {
+    setLiveMode(false);
+    setAnalysis(null);
+    setAnalysisError('');
+    lastAnnouncement.current = '';
+    void Speech.stop();
+  }, [setAnalysisError]));
+  const defaultMiniMapPosition = useMemo(() => ({
+    left: Math.max(insetLeft + 4, windowWidth - insetRight - 16 - MINI_MAP_WIDTH),
+    top: insetTop + 68,
+  }), [insetLeft, insetRight, insetTop, windowWidth]);
+
+  const setMiniMapGeometry = useCallback((left: number, top: number, scale: number) => {
+    const boundedScale = Math.max(MINI_MAP_MIN_SCALE, Math.min(MINI_MAP_MAX_SCALE, scale));
+    const position = clampMiniMapPosition(left, top, boundedScale, windowWidth, windowHeight, {
+      left: insetLeft, right: insetRight, top: insetTop, bottom: insetBottom,
+    });
+    miniMapGeometryRef.current = { position, scale: boundedScale };
+    setMiniMapPosition(position);
+    setMiniMapScale(boundedScale);
+  }, [insetBottom, insetLeft, insetRight, insetTop, windowHeight, windowWidth]);
+
+  const shouldStartMiniMapDrag = useCallback((_event: GestureResponderEvent, gesture: { dx: number; dy: number }) => (
+    Math.abs(gesture.dx) > 3 || Math.abs(gesture.dy) > 3
+  ), []);
+  const startMiniMapDrag = useCallback(() => {
+    const position = miniMapGeometryRef.current.position ?? defaultMiniMapPosition;
+    miniMapGestureStart.current = { ...position, scale: miniMapGeometryRef.current.scale, distance: 0 };
+  }, [defaultMiniMapPosition]);
+  const moveMiniMapDrag = useCallback((_event: GestureResponderEvent, gesture: { dx: number; dy: number; numberActiveTouches: number }) => {
+    if (gesture.numberActiveTouches > 1) return;
+    const start = miniMapGestureStart.current;
+    setMiniMapGeometry(start.left + gesture.dx, start.top + gesture.dy, start.scale);
+  }, [setMiniMapGeometry]);
+  // PanResponder retains these callbacks for touch events; it does not execute them during render.
+  // eslint-disable-next-line react-hooks/refs
+  const miniMapDragResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: shouldStartMiniMapDrag,
+    onPanResponderGrant: startMiniMapDrag,
+    onPanResponderMove: moveMiniMapDrag,
+    onPanResponderTerminationRequest: () => false,
+  }), [moveMiniMapDrag, shouldStartMiniMapDrag, startMiniMapDrag]);
+
+  const shouldStartMiniMapPinch = useCallback((event: GestureResponderEvent) => event.nativeEvent.touches.length > 1, []);
+  const shouldMoveMiniMapPinch = useCallback((_event: GestureResponderEvent, gesture: { numberActiveTouches: number }) => gesture.numberActiveTouches > 1, []);
+  const startMiniMapPinch = useCallback((event: GestureResponderEvent) => {
+    const position = miniMapGeometryRef.current.position ?? defaultMiniMapPosition;
+    miniMapGestureStart.current = {
+      ...position,
+      scale: miniMapGeometryRef.current.scale,
+      distance: getPinchDistance(event),
+    };
+  }, [defaultMiniMapPosition]);
+  const moveMiniMapPinch = useCallback((event: GestureResponderEvent, gesture: { numberActiveTouches: number }) => {
+    if (gesture.numberActiveTouches < 2) return;
+    const start = miniMapGestureStart.current;
+    const distance = getPinchDistance(event);
+    if (!start.distance || !distance) return;
+    const scale = start.scale * (distance / start.distance);
+    const centerX = start.left + (MINI_MAP_WIDTH * start.scale) / 2;
+    const centerY = start.top + (MINI_MAP_HEIGHT * start.scale) / 2;
+    setMiniMapGeometry(centerX - (MINI_MAP_WIDTH * scale) / 2, centerY - (MINI_MAP_HEIGHT * scale) / 2, scale);
+  }, [setMiniMapGeometry]);
+  // PanResponder retains these callbacks for touch events; it does not execute them during render.
+  // eslint-disable-next-line react-hooks/refs
+  const miniMapPinchResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponderCapture: shouldStartMiniMapPinch,
+    onMoveShouldSetPanResponderCapture: shouldMoveMiniMapPinch,
+    onStartShouldSetPanResponder: shouldStartMiniMapPinch,
+    onMoveShouldSetPanResponder: shouldMoveMiniMapPinch,
+    onPanResponderGrant: startMiniMapPinch,
+    onPanResponderMove: moveMiniMapPinch,
+    onPanResponderTerminationRequest: () => false,
+  }), [moveMiniMapPinch, shouldMoveMiniMapPinch, shouldStartMiniMapPinch, startMiniMapPinch]);
+
+  useEffect(() => {
+    const position = miniMapGeometryRef.current.position;
+    if (position) setMiniMapGeometry(position.left, position.top, miniMapGeometryRef.current.scale);
+  }, [setMiniMapGeometry]);
+
+  useEffect(() => {
+    if (location) miniMapRef.current?.centerOn(location);
+  }, [location]);
 
   const navigationCue = ((): NavigationCue | null => {
     if (!liveMode || !navigationPlan || !location) return null;
@@ -81,9 +204,12 @@ export default function AiPage() {
         if (!active) return;
         setAnalysis(result);
         setAnalysisError('');
-        const announcement = liveAnnouncement(result);
-        if (!navigationCueRef.current && announcement && announcement !== lastAnnouncement.current) {
-          lastAnnouncement.current = announcement;
+        const urgent = hasImmediateHazard(result);
+        const announcement = liveAnnouncement(result, facing === 'back');
+        const announcementKey = `${result.obstacles.slice(0, 2).map((item) => `${item.className}:${item.position}:${item.distanceBand}`).join('|')}:${result.visualSide}`;
+        if ((!navigationCueRef.current || urgent) && announcement && (announcementKey !== lastAnnouncement.current || (urgent && Date.now() - lastAlertAt.current > 10000))) {
+          lastAnnouncement.current = announcementKey;
+          lastAlertAt.current = Date.now();
           Speech.stop();
           Speech.speak(announcement, { language: locale, rate: 0.95 });
         }
@@ -101,7 +227,7 @@ export default function AiPage() {
       liveBusy.current = false;
       Speech.stop();
     };
-  }, [liveMode, permission?.granted, photoUri, locale, setAnalysisError]);
+  }, [liveMode, permission?.granted, photoUri, locale, facing, setAnalysisError]);
 
   useEffect(() => {
     if (!liveMode || !navigationCue) {
@@ -111,6 +237,7 @@ export default function AiPage() {
     const bucket = routeAnnouncementBucket(navigationCue.distanceMeters);
     const key = `${locale}:${navigationCue.key}:${bucket}`;
     if (key === lastRouteAnnouncement.current) return;
+    if (analysis && hasImmediateHazard(analysis)) return;
     lastRouteAnnouncement.current = key;
     const spoken = navigationCue.key === 'destination'
       ? navigationCue.instruction
@@ -119,15 +246,16 @@ export default function AiPage() {
         : t('ai.in', { value0: formatGuidanceDistance(navigationCue.distanceMeters), value1: navigationCue.instruction });
     Speech.stop();
     Speech.speak(spoken, { language: locale, rate: 0.92 });
-  }, [liveMode, navigationCue, locale]);
+  }, [liveMode, navigationCue, locale, analysis]);
 
   const reportPhoto = () => {
     router.push({ pathname: '/report-issue', params: { ...(location ? { lat: String(location.latitude), lon: String(location.longitude) } : {}), ...(photoUri ? { image: photoUri } : {}) } });
   };
 
   const speakCurrent = () => {
-    const message = navigationCue?.instruction
-      ?? (analysis ? liveAnnouncement(analysis) : t('ai.analyzingTheImagePleaseWait'));
+    const message = analysis && hasImmediateHazard(analysis)
+      ? liveAnnouncement(analysis, facing === 'back')
+      : navigationCue?.instruction ?? (analysis ? liveAnnouncement(analysis, facing === 'back') : t('ai.analyzingTheImagePleaseWait'));
     Speech.stop();
     Speech.speak(message, { language: locale, rate: 0.92 });
   };
@@ -177,18 +305,64 @@ export default function AiPage() {
         </Pressable> : null}
       </SafeAreaView>
 
+      {permission?.granted ? <View
+        style={[styles.miniMapPositioner, {
+          left: (miniMapPosition ?? defaultMiniMapPosition).left,
+          top: (miniMapPosition ?? defaultMiniMapPosition).top,
+          width: MINI_MAP_WIDTH * miniMapScale,
+          height: MINI_MAP_HEIGHT * miniMapScale,
+        }]}
+        {...miniMapPinchResponder.panHandlers}
+      >
+        <View style={[styles.miniMapCard, { transform: [{ scale: miniMapScale }] }]}>
+          <View
+            {...miniMapDragResponder.panHandlers}
+            style={styles.miniMapDragHandle}
+            accessibilityRole="button"
+            accessibilityLabel={t('ai.dragToMoveMiniMap')}
+            accessibilityHint={t('ai.pinchToResizeMiniMap')}
+          >
+            <View style={styles.miniMapLabel}>
+              <View style={styles.miniMapTitle}><Icon name="locate" size={12} color={colors.forest} /><Text style={styles.miniMapLabelText}>GPS</Text></View>
+              <Icon name="more" size={13} color="#94A3B8" />
+            </View>
+          </View>
+          <View style={styles.miniMapFrame}>
+            {location && miniMapReady ? <>
+              <OpenStreetMap
+                ref={miniMapRef}
+                center={location}
+                userLocation={location}
+                destination={navigationPlan ? {
+                  id: navigationPlan.destination.id,
+                  label: navigationPlan.destination.label,
+                  coordinates: navigationPlan.destination.coordinates,
+                } : null}
+                route={navigationPlan?.route.coordinates}
+                style={styles.miniMap}
+              />
+              <View style={styles.miniMapZoom}>
+                <Pressable onPress={() => miniMapRef.current?.zoomIn()} style={styles.miniMapZoomButton} accessibilityRole="button" accessibilityLabel={t('home.zoomIn')}><Icon name="plus" size={16} color={colors.forest} /></Pressable>
+                <View style={styles.miniMapZoomDivider} />
+                <Pressable onPress={() => miniMapRef.current?.zoomOut()} style={styles.miniMapZoomButton} accessibilityRole="button" accessibilityLabel={t('home.zoomOut')}><Icon name="minus" size={16} color={colors.forest} /></Pressable>
+              </View>
+            </> : <View style={styles.miniMapEmpty}><Icon name="locate" size={20} color={colors.forest} /><Text style={styles.miniMapEmptyText}>{location ? t('common.loadingOpenstreetmap') : t('home.findingYourLocation')}</Text></View>}
+          </View>
+        </View>
+      </View> : null}
+
       {cameraError ? <View style={styles.cameraNotice}><Text style={styles.cameraNoticeText}>{cameraError}</Text></View> : null}
 
       {permission?.granted ? <View style={styles.voiceDock}>
         {navigationCue ? <View style={styles.voiceStatus} accessibilityLiveRegion="polite">
-          <View style={[styles.voiceStatusDot, navigationCue.instruction === t('ai.offRoute') && styles.voiceStatusDotWarning]} />
-          <Text numberOfLines={1} style={styles.voiceStatusText}>{navigationCue.instruction} · {formatGuidanceDistance(navigationCue.distanceMeters)}</Text>
+          <View style={[styles.voiceStatusDot, ((analysis && hasImmediateHazard(analysis)) || navigationCue.instruction === t('ai.offRoute')) && styles.voiceStatusDotWarning]} />
+          <Text numberOfLines={2} style={styles.voiceStatusText}>{analysis && hasImmediateHazard(analysis) ? liveAnnouncement(analysis, facing === 'back') : `${navigationCue.instruction} · ${formatGuidanceDistance(navigationCue.distanceMeters)}`}</Text>
         </View> : analysis || analysisError ? <Pressable onPress={() => { if (photoUri && !analyzing) void runAnalysis(photoUri); }} style={styles.voiceStatus} accessibilityRole="button" accessibilityLabel={t('ai.analyzeImageWithAi')}>
           <View style={[styles.voiceStatusDot, analysisError && styles.voiceStatusDotWarning]} />
-          <Text numberOfLines={1} style={styles.voiceStatusText}>{analysisError || (analyzing ? t('ai.analyzingImage') : formatAnalysis(analysis as AiAnalysis))}</Text>
+          <Text numberOfLines={2} style={styles.voiceStatusText}>{analysisError || (analyzing ? t('ai.analyzingImage') : liveAnnouncement(analysis as AiAnalysis, facing === 'back'))}</Text>
         </Pressable> : <View style={styles.voiceStatus} accessibilityLiveRegion="polite">
           <View style={[styles.voiceStatusDot, styles.voiceStatusDotReady]} />
-          <Text numberOfLines={1} style={styles.voiceStatusText}>{t('ai.waitingForAiAnalysis')}</Text>
+          <Text numberOfLines={1} style={styles.voiceStatusText}>{t(liveMode ? 'ai.waitingForAiAnalysis' : 'ai.tapAiToStartDetection')}</Text>
         </View>}
         <View style={styles.voiceControls}>
           <Pressable onPress={reportPhoto} style={styles.voiceCircle} accessibilityRole="button" accessibilityLabel={t('ai.reportAnIssue')}><Icon name="flag" size={21} color="#2563EB" /></Pressable>
@@ -213,15 +387,32 @@ function getAiClassLabels(): Record<string, string> { return {
 }; }
 
 function formatAnalysis(result: AiAnalysis) {
-  const labels = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} · ${detectionPosition(item.position)} · ${detectionDistance(item.distanceBand)}`))];
+  const labels = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} · ${detectionPosition(item.position)} · ${formatObstacleDistance(item)}`))];
   const detected = labels.length ? ` (${labels.join(', ')})` : '';
-  return t('ai.obstaclesDetectedWalkwayCoverage', { value0: result.obstacles.length, value1: detected, value2: Math.round(result.sidewalkCoverage * 100) });
+  return `${t('ai.obstaclesDetectedWalkwayCoverage', { value0: result.obstacles.length, value1: detected, value2: Math.round(result.sidewalkCoverage * 100) })}. ${liveAnnouncement(result)}`;
 }
 
-function liveAnnouncement(result: AiAnalysis) {
+function hasImmediateHazard(result: AiAnalysis) {
+  return result.obstacles.some((item) => item.distanceBand === aiResultLabels.distance.near);
+}
+
+function formatObstacleDistance(item: AiDetection) {
+  return item.distanceMeters == null ? detectionDistance(item.distanceBand) : t('ai.approxMeters', { value0: item.distanceMeters });
+}
+
+function liveAnnouncement(result: AiAnalysis, allowVisualSide = false) {
   if (!result.obstacles.length) return t('ai.noObstaclesDetectedAhead');
-  const items = [...new Set(result.obstacles.map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} ${detectionPosition(item.position)} ${detectionDistance(item.distanceBand)}`))];
-  return t('ai.watchOut', { value0: items.join(t('ai.and')) });
+  const items = [...new Set(result.obstacles.slice(0, 2).map((item) => `${getAiClassLabels()[item.className] || t('ai.unknownObstacle')} ${detectionPosition(item.position)} ${formatObstacleDistance(item)}`))];
+  const warning = t('ai.watchOut', { value0: items.join(t('ai.and')) });
+  if (!allowVisualSide || !hasImmediateHazard(result)) return warning;
+  const near = result.obstacles.filter((item) => item.distanceBand === aiResultLabels.distance.near);
+  const leftBlocked = near.some((item) => item.position === aiResultLabels.position.left);
+  const rightBlocked = near.some((item) => item.position === aiResultLabels.position.right);
+  const distanceCaution = near.every((item) => item.distanceMeters == null) ? ` ${t('ai.visualDistanceUnknown')}` : '';
+  if (leftBlocked && rightBlocked) return `${warning}. ${t('ai.visualBothSidesBlocked')}${distanceCaution}`;
+  if (!result.visualSide || (result.visualSide === 'left' && leftBlocked) || (result.visualSide === 'right' && rightBlocked)) return distanceCaution ? `${warning}.${distanceCaution}` : warning;
+  const side = result.visualSide === 'left' ? t('ai.left') : t('ai.right');
+  return `${warning}. ${t('ai.visualSideClearer', { value0: side })}${distanceCaution}`;
 }
 
 type NavigationCue = {
@@ -252,6 +443,19 @@ const styles = StyleSheet.create({
   tint: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(8,20,38,0.12)' },
   safe: { flex: 1, paddingHorizontal: 16, paddingTop: 10 },
   aiTopControls: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  miniMapPositioner: { position: 'absolute', zIndex: 20, alignItems: 'center', justifyContent: 'center' },
+  miniMapCard: { width: MINI_MAP_WIDTH, height: MINI_MAP_HEIGHT, padding: 5, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.96)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.8)', shadowColor: '#000000', shadowOpacity: 0.18, shadowRadius: 8, elevation: 5 },
+  miniMapDragHandle: { height: 24, marginBottom: 3, justifyContent: 'center', borderRadius: 5, backgroundColor: '#F1F5F9' },
+  miniMapLabel: { height: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4, paddingHorizontal: 5 },
+  miniMapTitle: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  miniMapLabelText: { color: colors.forest, fontSize: 9, fontWeight: '900', letterSpacing: 0.3 },
+  miniMapFrame: { position: 'relative', width: 132, height: 132, overflow: 'hidden', borderRadius: 7, borderWidth: 1, borderColor: '#CBD5E1' },
+  miniMap: { width: '100%', height: '100%' },
+  miniMapEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 10, backgroundColor: '#EAF2FF' },
+  miniMapEmptyText: { color: colors.forest, fontSize: 9, fontWeight: '700', textAlign: 'center' },
+  miniMapZoom: { position: 'absolute', right: 5, bottom: 5, borderRadius: 7, backgroundColor: 'rgba(255,255,255,0.96)', overflow: 'hidden', shadowColor: '#0F172A', shadowOpacity: 0.16, shadowRadius: 4, elevation: 3 },
+  miniMapZoomButton: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  miniMapZoomDivider: { height: 1, backgroundColor: '#D8E0E9' },
   brandChip: { minHeight: 46, borderRadius: 23, backgroundColor: 'rgba(255,255,255,0.96)', flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 9, paddingVertical: 5, shadowColor: '#000000', shadowOpacity: 0.16, shadowRadius: 10, elevation: 7 },
   brandMark: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center' },
   brandTitle: { color: '#173B8F', fontSize: 11, lineHeight: 13, fontWeight: '900' },

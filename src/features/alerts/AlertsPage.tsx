@@ -1,8 +1,11 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { AppText as Text } from '../../components/ui/AppText';
-import { Icon, type IconName } from '../../components/ui/Icon';
+import { Icon } from '../../components/ui/Icon';
 import { MapPreview } from '../../components/maps/MapPreview';
+import { reportMarkerIconFor } from '../../components/maps/reportMarker';
+import { ReportDetailsSheet } from '../../components/reports/ReportDetailsSheet';
+import { issueAppearance } from '../../components/reports/reportAppearance';
 import { Screen } from '../../components/layout/Screen';
 import { useAppData, type LocalReport } from '../../providers/app-data';
 import { distanceMeters } from '../../services/geo';
@@ -20,6 +23,7 @@ export default function AlertsPage() {
   const [active, setActive] = useState(ALL);
   const [filtersVisible, setFiltersVisible] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [selectedReport, setSelectedReport] = useState<LocalReport | null>(null);
 
   const categories = useMemo(() => [ALL, ...Array.from(new Set(reports.map((report) => report.type)))], [reports]);
   const visibleReports = useMemo(() => active === ALL ? reports : reports.filter((report) => report.type === active), [active, reports]);
@@ -29,7 +33,8 @@ export default function AlertsPage() {
       id: report.id,
       label: `${issueLabel(report.type)} · ${severityLabel(report.severity)}`,
       coordinates: report.coordinates,
-      color: report.severity === 'high' ? '#DC2626' : report.severity === 'medium' ? '#F97316' : '#2563EB',
+      color: issueAppearance[report.type].color,
+      reportIcon: reportMarkerIconFor(report.type),
     };
   });
 
@@ -74,29 +79,28 @@ export default function AlertsPage() {
         <Text style={styles.sourceText}>ข้อมูลรายงานเชื่อมต่อกับ StepAble API · {reports.length} รายงานในระบบ</Text>
       </View>
 
-      <MapPreview compact center={location} userLocation={location} markers={markers} />
+      <MapPreview compact center={location} userLocation={location} markers={markers} onMarkerPress={(markerId) => {
+        const report = reports.find((item) => item.id === markerId);
+        if (report) setSelectedReport(report);
+      }} />
 
       {visibleReports.length ? (
         <View style={styles.list}>
           {visibleReports.map((report) => {
             const tone: 'red' | 'orange' | 'blue' = report.severity === 'high' ? 'red' : report.severity === 'medium' ? 'orange' : 'blue';
-            const icon: IconName = report.type.includes('แสง') || report.type.includes('มืด') || report.type === 'poor_lighting'
-              ? 'sun'
-              : report.type.includes('ทางเท้า') || report.type === 'damaged_sidewalk'
-                ? 'route'
-                : 'warning';
+            const appearance = issueAppearance[report.type];
             const distance = location ? formatDistance(distanceMeters(location, report.coordinates)) : 'GPS ไม่พร้อม';
             const statusLabel = report.status ? statusToThai(report.status) : null;
             return (
               <Pressable
                 key={report.id}
-                onPress={() => openReportRoute(report)}
+                onPress={() => setSelectedReport(report)}
                 style={styles.card}
                 accessibilityRole="button"
-                accessibilityLabel={`${issueLabel(report.type)}, ${distance}. แตะเพื่อดูเส้นทาง`}
+                accessibilityLabel={`${issueLabel(report.type)}, ${distance}. แตะเพื่อดูรายละเอียดรายงาน`}
               >
-                <View style={[styles.alertIcon, styles[tone]]}>
-                  <Icon name={icon} size={24} color={iconColors[tone]} />
+                <View style={[styles.alertIcon, { backgroundColor: appearance.background }]}>
+                  <Icon name={appearance.icon} size={24} color={appearance.color} />
                 </View>
                 <View style={styles.cardCopy}>
                   <Text numberOfLines={1} style={styles.cardTitle}>{issueLabel(report.type)}</Text>
@@ -134,6 +138,10 @@ export default function AlertsPage() {
           </Pressable>
         </View>
       )}
+      <ReportDetailsSheet report={selectedReport} onClose={() => setSelectedReport(null)} onRoute={(report) => {
+        setSelectedReport(null);
+        openReportRoute(report);
+      }} />
     </Screen>
   );
 }
